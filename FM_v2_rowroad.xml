@@ -1,0 +1,283 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+	<declaration>// Place global declarations here.
+
+
+/************************************************************
+ *                     MAP CONSTANTS
+ ************************************************************/
+
+const int WIDTH  = 18;
+const int HEIGHT = 13;
+
+const int MAX_LIVES = 5;
+const int NUM_HOME_BAYS = 5;
+
+const int INITIAL_TIME_LIMIT = 300;   // 30 s
+
+const int MAX_PER_ROW = 4;
+const int NUM_ROAD_ROWS = 5;
+
+const int BORDER_DELAY = 2;
+
+/************************************************************
+ *                    ENUMERATIONS
+ ************************************************************/
+
+typedef int[0,3] TileType;
+
+const TileType SAFE  = 0;
+const TileType ROAD  = 1;
+const TileType RIVER = 2;
+const TileType HOME  = 3;
+
+typedef int[0,4] ObjectType;
+
+const ObjectType VEHICLE        = 0;
+const ObjectType TRUCK          = 1;
+const ObjectType LOG            = 2;
+const ObjectType TURTLE         = 3;
+const ObjectType DIVING_TURTLE  = 4;
+
+/************************************************************
+ *              IMMUTABLE OBJECT DESCRIPTION
+ ************************************************************/
+
+
+typedef struct
+{
+    int row;                    // y coordinate
+
+    int size;                   // vehicle length
+
+    int speed;                  // movement period
+
+    bool moveLeft;
+
+    ObjectType type;
+
+    int numObjects;
+
+    int initialX[MAX_PER_ROW];
+} RowInfo;
+
+
+/************************************************************
+ *              MUTABLE OBJECT STATE
+ ************************************************************/
+
+typedef struct
+{
+    int x[MAX_PER_ROW];
+} RowState;
+
+/************************************************************
+ *                GAME STATE VARIABLES
+ ************************************************************/
+
+int frog_x = 9;
+int frog_y = 0;
+
+int score = 0;
+int lives = MAX_LIVES;
+
+bool bayOccupied[NUM_HOME_BAYS] =
+{
+    false,false,false,false,false
+};
+
+clock levelClock; //only for the game time out
+
+/************************************************************
+ *                 STATIC MAP
+ ************************************************************/
+
+const TileType map[HEIGHT] =
+{
+    SAFE,   // 0
+    ROAD,   // 1
+    ROAD,   // 2
+    ROAD,   // 3
+    ROAD,   // 4
+    ROAD,   // 5
+    SAFE,   // 6
+    RIVER,  // 7
+    RIVER,  // 8
+    RIVER,  // 9
+    RIVER,  //10
+    RIVER,  //11
+    HOME    //12
+};
+
+/************************************************************
+ *              SYNCHRONIZATION CHANNELS
+ ************************************************************/
+
+chan moveHop;
+
+broadcast chan frogDies;
+broadcast chan reachBay;
+
+broadcast chan finishLevel;
+
+/************************************************************
+ *            OBJECT DECLARATIONS
+ ************************************************************/
+const RowInfo rowInfo[NUM_ROAD_ROWS] =
+{
+    //row,size,speed,left,type,numObj,{positions}
+
+    {1,1,3,true ,VEHICLE,2,{4,14,0,0}},
+
+    {2,1,10,false,VEHICLE,2,{2,11,0,0}},
+
+    {3,1,5,true ,VEHICLE,4,{4,8,13,17}},
+
+    {4,1,4,false,VEHICLE,2,{2,10,0,0}},
+
+    {5,2,7,true ,TRUCK,2,{4,15,0,0}}
+};
+
+RowState rowState[NUM_ROAD_ROWS];
+
+void initializeRows()
+{
+    int r,c;
+
+    for(r=0;r&lt;NUM_ROAD_ROWS;r++)
+    {
+        for(c=0;c&lt;rowInfo[r].numCars;c++)
+        {
+            rowState[r].x[c]=rowInfo[r].initialX[c];
+        }
+    }
+}
+
+//shift all the objects in the row simultaneously 
+void moveRow(int r)
+{
+    int c;
+
+    for(c = 0; c &lt; rowInfo[r].numCars; c++)
+    {
+        if(rowInfo[r].moveLeft)
+        {
+            rowState[r].x[c]--;
+
+            if (rowState[r].x[c] == -(owInfo[r].size )
+                rowState[r].x[c] = WIDTH + BORDER_DELAY - 1;
+        }
+        else
+        {
+            rowState[r].x[c]++;
+
+            if (rowState[r].x[c] == WIDTH 
+                rowState[r].x[c] = -(rowInfo[r].size + BORDER_DELAY - 1);
+        }
+    }
+}</declaration>
+	<template>
+		<name>RowRoad</name>
+		<parameter>const int id</parameter>
+		<declaration>clock c;
+int offset = 0;</declaration>
+		<location id="id0" x="0" y="0">
+		</location>
+		<init ref="id0"/>
+	</template>
+	<template>
+		<name>GameInit</name>
+		<location id="id1" x="-229" y="0">
+			<name x="-239" y="-34">Start</name>
+		</location>
+		<location id="id2" x="153" y="0">
+			<name x="143" y="-34">End</name>
+		</location>
+		<init ref="id1"/>
+		<transition id="id3">
+			<source ref="id1"/>
+			<target ref="id2"/>
+			<label kind="assignment" x="-119" y="8">initializeObjects()</label>
+		</transition>
+	</template>
+	<template>
+		<name>Vehicle</name>
+		<parameter>const int id</parameter>
+		<declaration>clock c;</declaration>
+		<location id="id4" x="0" y="0">
+			<name x="-10" y="-34">moving</name>
+			<label kind="invariant" x="-68" y="25">c &lt;= objectInfo[id].speed</label>
+		</location>
+		<location id="id5" x="-357" y="-8">
+			<name x="-603" y="-42">outsideBoundary</name>
+			<label kind="invariant" x="-450" y="8">c &lt;= 2* objectInfo[id].speed</label>
+		</location>
+		<init ref="id4"/>
+		<transition id="id6">
+			<source ref="id4"/>
+			<target ref="id4"/>
+			<label kind="guard" x="212" y="-51">!leftScreen(id) &amp;&amp; c == objectInfo[id].speed</label>
+			<label kind="assignment" x="221" y="-25">c = 0, moveObject(id)</label>
+			<nail x="212" y="85"/>
+			<nail x="212" y="-102"/>
+		</transition>
+		<transition id="id7">
+			<source ref="id4"/>
+			<target ref="id5"/>
+			<label kind="guard" x="-348" y="-195">leftScreen(id) &amp;&amp; c == objectInfo[id].speed</label>
+			<label kind="assignment" x="-340" y="-178">c = 0, moveObject(id)</label>
+			<nail x="0" y="-144"/>
+			<nail x="-357" y="-144"/>
+		</transition>
+		<transition id="id8">
+			<source ref="id5"/>
+			<target ref="id4"/>
+			<label kind="guard" x="-289" y="102">c == 2*objectInfo[id].speed</label>
+			<label kind="assignment" x="-280" y="127">respawnObject(id), c = 0</label>
+			<nail x="-357" y="85"/>
+			<nail x="0" y="85"/>
+		</transition>
+	</template>
+	<template>
+		<name x="5" y="5">TemplateFloatingObject</name>
+		<parameter>const int id</parameter>
+		<declaration>// Place local declarations here.
+clock c;</declaration>
+		<location id="id9" x="0" y="0">
+		</location>
+		<init ref="id9"/>
+	</template>
+	<system>// Place template instantiations here.
+
+// List one or more processes to be composed into a system.
+
+V0 = Vehicle(0);
+V1 = Vehicle(1);
+V2 = Vehicle(2);
+V3 = Vehicle(3);
+V4 = Vehicle(4);
+
+V5 = Vehicle(5);
+V6 = Vehicle(6);
+V7 = Vehicle(7);
+V8 = Vehicle(8);
+V9 = Vehicle(9);
+
+//V10 = Vehicle(10);
+
+system
+    V0, V1,
+    V2, V3,
+    V4, V5, V6, V7,
+    V8, V9;
+  //  V10;</system>
+	<queries>
+		<query>
+			<formula>A[] not deadlock</formula>
+			<comment/>
+			<result outcome="success" type="quality" timestamp="2026-07-09 21:35:26 +0200">
+			</result>
+		</query>
+	</queries>
+</nta>
