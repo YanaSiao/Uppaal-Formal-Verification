@@ -23,6 +23,10 @@ const int NUM_MOVING_ROWS = 12;
 const int TIME_UNITS_PER_SECOND = 10;
 const int TOTAL_LOOP = WIDTH + BORDER_DELAY;
 
+//frog starts from this point on the map
+const int START_X= 9;
+const int START_Y = 0;
+
 /************************************************************
  *                    ENUMERATIONS
  ************************************************************/
@@ -58,8 +62,6 @@ typedef struct
     int initialX[MAX_PER_ROW];
 } RowInfo;
 
-int currentLevel = 1;
-
 
 /************************************************************
  *              MUTABLE OBJECT STATE
@@ -74,19 +76,17 @@ typedef struct
  *                GAME STATE VARIABLES
  ************************************************************/
 
-int frog_x = 9;
-int frog_y = 0;
+int frog_x;
+int frog_y;
 
-int score = 0;
-int lives = MAX_LIVES;
+int score;
+int lives;
 
-bool bayOccupied[NUM_HOME_BAYS] =
-{
-    false,false,false,false,false
-};
+bool bayOccupied[NUM_HOME_BAYS];
 
-int[0, INITIAL_TIME_LIMIT] globalTick = 0;
-int currentLevelTimeLimit = 300;
+int[0, INITIAL_TIME_LIMIT] globalTick;
+int currentLevelTimeLimit;
+int currentLevel;
 
 /************************************************************
  *                 STATIC MAP
@@ -163,19 +163,23 @@ const RowInfo rowInfo[NUM_MOVING_ROWS] =
 
 RowState rowState[NUM_MOVING_ROWS];
 
-
+bool isSubmerged[NUM_MOVING_ROWS];
 
 //------------------------------------------------------INIT---------------------------
 void initializeRows()
 {
-    int r,c;
+    int y, obj;
 
-    for(r=0;r&lt;NUM_MOVING_ROWS ;r++)
+    for(y = 0; y &lt; NUM_MOVING_ROWS; y++)
     {
-        for(c=0;c&lt;rowInfo[r].numObjects;c++)
+        for(obj = 0; obj &lt; rowInfo[y].numObjects; obj++)
         {
-            rowState[r].x[c]=rowInfo[r].initialX[c];
+            rowState[y].x[obj] = rowInfo[y].initialX[obj];
         }
+
+        // Only meaningful for diving turtle rows.
+        // Other rows ignore this value.
+        isSubmerged[y] = false;
     }
 }
 
@@ -192,33 +196,35 @@ int getCurrentTimeLimit()
     return (32 - 2 * currentLevel) * TIME_UNITS_PER_SECOND;
 }
 
-void restartLevel()
+void frogReposition()
 {
+    frog_x = START_X;
+    frog_y = START_Y;
+
     globalTick = 0;
-    initializeRows();
+}
 
-    frog_x = 9;
-    frog_y = 0;
+void startNewLevel()
+{
+    currentLevel++;
 
-    // later:
-    // initialize turtles
-    // initialize logs
-    // reset score if starting a new game
+    clearHomeBays();
+
+    frogReposition();
+
+    currentLevelTimeLimit = getCurrentTimeLimit();
 }
 
 void initializeGame()
 {
     initializeRows();
-    clearHomeBays();
 
-    frog_x = 9;
-    frog_y = 0;
-
-    score = 0;
+    currentLevel = 0; // startNewLevel() creates level 1
     lives = MAX_LIVES;
+    score = 0;
 
-    globalTick = 0;
-    currentLevelTimeLimit = getCurrentTimeLimit();
+    startNewLevel();
+
 }
 //------------------------------------------------------ROWS---------------------------
 
@@ -326,51 +332,181 @@ bool checkCollision()
     }
 
     return false;
+}
+
+void loseLife()
+{
+    lives--;
+
+    frogReposition();
 }</declaration>
+	<template>
+		<name>GameManager</name>
+		<location id="id0" x="-457" y="-8">
+			<name x="-476" y="8">Start</name>
+		</location>
+		<location id="id1" x="-93" y="-8">
+			<name x="-103" y="-42">Playing</name>
+		</location>
+		<location id="id2" x="-289" y="-297">
+			<name x="-315" y="-331">GameOver</name>
+		</location>
+		<location id="id3" x="323" y="119">
+			<name x="272" y="144">LevelTransition</name>
+		</location>
+		<init ref="id0"/>
+		<transition id="id4">
+			<source ref="id3"/>
+			<target ref="id1"/>
+			<nail x="-93" y="119"/>
+		</transition>
+		<transition id="id5">
+			<source ref="id1"/>
+			<target ref="id3"/>
+			<label kind="assignment" x="102" y="-34">startNewLevel()</label>
+			<nail x="323" y="-8"/>
+		</transition>
+		<transition id="id6">
+			<source ref="id2"/>
+			<target ref="id0"/>
+		</transition>
+		<transition id="id7">
+			<source ref="id1"/>
+			<target ref="id2"/>
+			<label kind="guard" x="-229" y="-246">lives == 0</label>
+		</transition>
+		<transition id="id8">
+			<source ref="id0"/>
+			<target ref="id1"/>
+			<label kind="assignment" x="-374" y="8">initializeGame()</label>
+		</transition>
+	</template>
+	<template>
+		<name>DivingTurtle</name>
+		<parameter>const int id</parameter>
+		<declaration>int timer = 0;
+</declaration>
+		<location id="id9" x="-289" y="8">
+			<name x="-299" y="-26">Emerged</name>
+		</location>
+		<location id="id10" x="272" y="25">
+			<name x="262" y="-9">Submerged</name>
+		</location>
+		<location id="id11" x="-17" y="-212">
+			<name x="-27" y="-246">Emerging</name>
+		</location>
+		<location id="id12" x="-8" y="204">
+			<name x="-18" y="170">Diving</name>
+		</location>
+		<init ref="id9"/>
+		<transition id="id13">
+			<source ref="id11"/>
+			<target ref="id11"/>
+			<label kind="synchronisation" x="-51" y="-391">tick?</label>
+			<label kind="assignment" x="-51" y="-374">timer++, 
+updateRow(id)</label>
+			<nail x="85" y="-323"/>
+			<nail x="-102" y="-323"/>
+		</transition>
+		<transition id="id14">
+			<source ref="id10"/>
+			<target ref="id10"/>
+			<label kind="synchronisation" x="416" y="-17">tick?</label>
+			<label kind="assignment" x="416" y="0">timer++, 
+updateRow(id)</label>
+			<nail x="391" y="102"/>
+			<nail x="391" y="-51"/>
+		</transition>
+		<transition id="id15">
+			<source ref="id12"/>
+			<target ref="id12"/>
+			<label kind="synchronisation" x="-51" y="306">tick?</label>
+			<label kind="assignment" x="-51" y="323">timer++, 
+updateRow(id)</label>
+			<nail x="-68" y="289"/>
+			<nail x="59" y="289"/>
+		</transition>
+		<transition id="id16">
+			<source ref="id9"/>
+			<target ref="id9"/>
+			<label kind="synchronisation" x="-552" y="-42">tick?</label>
+			<label kind="assignment" x="-552" y="-25">timer++, 
+updateRow(id)</label>
+			<nail x="-434" y="-63"/>
+			<nail x="-434" y="64"/>
+		</transition>
+		<transition id="id17">
+			<source ref="id11"/>
+			<target ref="id9"/>
+			<label kind="guard" x="-272" y="-161">timer == 10</label>
+			<label kind="assignment" x="-272" y="-127">timer = 0</label>
+		</transition>
+		<transition id="id18">
+			<source ref="id10"/>
+			<target ref="id11"/>
+			<label kind="guard" x="136" y="-161">timer == 10</label>
+			<label kind="assignment" x="136" y="-127">timer = 0,
+isSubmerged[id] = false</label>
+		</transition>
+		<transition id="id19">
+			<source ref="id12"/>
+			<target ref="id10"/>
+			<label kind="guard" x="153" y="127">timer == 5</label>
+			<label kind="assignment" x="153" y="161">timer = 0,
+isSubmerged[id] = true</label>
+		</transition>
+		<transition id="id20">
+			<source ref="id9"/>
+			<target ref="id12"/>
+			<label kind="guard" x="-263" y="102">timer == 10</label>
+			<label kind="assignment" x="-263" y="136">timer = 0</label>
+		</transition>
+	</template>
+	<template>
+		<name>RowRoad</name>
+		<parameter>const int id</parameter>
+		<declaration>// describes roads, logs, turtles in movement
+</declaration>
+		<location id="id21" x="280" y="0">
+			<name x="255" y="-42">Running</name>
+		</location>
+		<init ref="id21"/>
+		<transition id="id22">
+			<source ref="id21"/>
+			<target ref="id21"/>
+			<label kind="synchronisation" x="594" y="-51">tick?</label>
+			<label kind="assignment" x="594" y="-34">updateRow(id)</label>
+			<nail x="586" y="-127"/>
+			<nail x="586" y="110"/>
+		</transition>
+	</template>
 	<template>
 		<name>GlobalClock</name>
 		<declaration>clock c;
 </declaration>
-		<location id="id0" x="178" y="0">
-			<name x="168" y="-34">Running</name>
-			<label kind="invariant" x="168" y="17">c &lt;= 1</label>
+		<location id="id23" x="178" y="0">
+			<name x="161" y="25">Running</name>
+			<label kind="invariant" x="161" y="51">c &lt;= 1</label>
 		</location>
-		<init ref="id0"/>
-		<transition id="id1">
-			<source ref="id0"/>
-			<target ref="id0"/>
+		<init ref="id23"/>
+		<transition id="id24">
+			<source ref="id23"/>
+			<target ref="id23"/>
 			<label kind="guard" x="-145" y="93">globalTick == currentLevelTimeLimit</label>
 			<label kind="synchronisation" x="-144" y="68">restart!</label>
-			<label kind="assignment" x="-145" y="119">restartLevel()</label>
+			<label kind="assignment" x="-145" y="119">startLevel()</label>
 			<nail x="8" y="76"/>
 			<nail x="8" y="-51"/>
 		</transition>
-		<transition id="id2">
-			<source ref="id0"/>
-			<target ref="id0"/>
+		<transition id="id25">
+			<source ref="id23"/>
+			<target ref="id23"/>
 			<label kind="guard" x="391" y="-26">c == 1 &amp;&amp; globalTick &lt; currentLevelTimeLimit</label>
 			<label kind="synchronisation" x="391" y="-9">tick!</label>
 			<label kind="assignment" x="391" y="8">c = 0,
 globalTick++</label>
 			<nail x="374" y="-60"/>
 			<nail x="374" y="84"/>
-		</transition>
-	</template>
-	<template>
-		<name>RowRoad</name>
-		<parameter>const int id</parameter>
-		<declaration>// describes roads, logs, turtles in movement</declaration>
-		<location id="id3" x="280" y="0">
-			<name x="255" y="-42">Running</name>
-		</location>
-		<init ref="id3"/>
-		<transition id="id4">
-			<source ref="id3"/>
-			<target ref="id3"/>
-			<label kind="synchronisation" x="594" y="-51">tick?</label>
-			<label kind="assignment" x="594" y="-34">updateRow(id)</label>
-			<nail x="586" y="-127"/>
-			<nail x="586" y="110"/>
 		</transition>
 	</template>
 	<system>// Place template instantiations here.
@@ -416,13 +552,13 @@ system
 BY DESIGN no mutable rowInfo[y] exists. an Object cannot move from one line to another by design ().
 
 Query checks if x is the only mutable coordinate.</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-11 15:28:28 +0200">
+			<result outcome="success" type="quality" timestamp="2026-07-12 18:12:39 +0200">
 			</result>
 		</query>
 		<query>
 			<formula>A[] not deadlock</formula>
 			<comment>I) Without considering Frogger: the game never reaches a deadlock state.</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-12 12:35:51 +0200">
+			<result outcome="success" type="quality" timestamp="2026-07-12 18:12:35 +0200">
 			</result>
 		</query>
 		<query>
@@ -436,7 +572,7 @@ forall(obj:int[0,MAX_PER_ROW-1])
 BY DESIGN no mutable rowInfo[y] exists. an Object cannot move from one line to another by design ().
 
 Query every object always remains inside the cyclic lane assigned to it.</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-12 12:06:01 +0200">
+			<result outcome="success" type="quality" timestamp="2026-07-12 18:12:41 +0200">
 			</result>
 		</query>
 	</queries>
