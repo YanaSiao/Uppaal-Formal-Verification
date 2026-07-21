@@ -732,8 +732,25 @@ since both persist across many ticks while waiting for the next event.</label>
 			<name x="364" y="-272">EvaluateSafety</name>
 			<committed/>
 		</location>
+		<location id="id24" x="-221" y="-433">
+			<name x="-238" y="-467">Moving</name>
+			<label kind="invariant" x="-255" y="-416">lives &gt; 0</label>
+		</location>
 		<init ref="id21"/>
-		<transition id="id24">
+		<transition id="id25">
+			<source ref="id24"/>
+			<target ref="id21"/>
+			<label kind="guard" x="-619" y="-467">checkCollision() == true</label>
+			<label kind="synchronisation" x="-619" y="-450">loseOneLife!</label>
+			<nail x="-637" y="-433"/>
+			<nail x="-637" y="195"/>
+		</transition>
+		<transition id="id26">
+			<source ref="id22"/>
+			<target ref="id24"/>
+			<label kind="synchronisation" x="-221" y="-352">tick?</label>
+		</transition>
+		<transition id="id27">
 			<source ref="id22"/>
 			<target ref="id21"/>
 			<label kind="guard" x="-535" y="-161">globalTick &gt;= currentLevelTimeLimit</label>
@@ -741,7 +758,7 @@ since both persist across many ticks while waiting for the next event.</label>
 			<nail x="-476" y="-127"/>
 			<nail x="-476" y="51"/>
 		</transition>
-		<transition id="id25">
+		<transition id="id28">
 			<source ref="id23"/>
 			<target ref="id21"/>
 			<label kind="guard" x="144" y="-68">map[frog_y] == HOME</label>
@@ -749,37 +766,37 @@ since both persist across many ticks while waiting for the next event.</label>
 			<label kind="assignment" x="144" y="-34">occupyHomeBay()</label>
 			<nail x="204" y="8"/>
 		</transition>
-		<transition id="id26">
+		<transition id="id29">
 			<source ref="id23"/>
 			<target ref="id22"/>
 			<label kind="guard" x="-25" y="-229">checkCollision() == false &amp;&amp;
 map[frog_y] != HOME</label>
 			<label kind="assignment" x="-25" y="-187">score+=MOVE_SCORE</label>
 		</transition>
-		<transition id="id27">
+		<transition id="id30">
 			<source ref="id23"/>
 			<target ref="id21"/>
 			<label kind="guard" x="382" y="0">checkCollision() == true</label>
 			<label kind="synchronisation" x="382" y="17">loseOneLife!</label>
 			<nail x="374" y="102"/>
 		</transition>
-		<transition id="id28">
-			<source ref="id22"/>
+		<transition id="id31">
+			<source ref="id24"/>
 			<target ref="id23"/>
 			<label kind="guard" x="17" y="-450">globalTick &lt; currentLevelTimeLimit 
 &amp;&amp; checkCollision() == false</label>
 			<label kind="assignment" x="17" y="-408">moveFrog()</label>
 			<nail x="76" y="-382"/>
 		</transition>
-		<transition id="id29">
+		<transition id="id32">
 			<source ref="id22"/>
 			<target ref="id21"/>
-			<label kind="guard" x="-552" y="-314">checkCollision() == true</label>
-			<label kind="synchronisation" x="-552" y="-289">loseOneLife!</label>
+			<label kind="guard" x="-544" y="-288">checkCollision() == true</label>
+			<label kind="synchronisation" x="-544" y="-263">loseOneLife!</label>
 			<nail x="-578" y="-238"/>
 			<nail x="-578" y="102"/>
 		</transition>
-		<transition id="id30">
+		<transition id="id33">
 			<source ref="id21"/>
 			<target ref="id22"/>
 			<label kind="synchronisation" x="-357" y="-25">frogInitPosition?</label>
@@ -813,7 +830,7 @@ DiveState = DivingTurtle();
 
 Frog = Frogger();
 system
-    Frog,            //has to be commented out for query 1 and 2
+    //Frog,            //has to be commented out for query 1 and 2
 
     Clock, 
     Game, 
@@ -841,10 +858,10 @@ system
 			<formula>A[] not deadlock</formula>
 			<comment>I) Without considering Frogger: the game never reaches a deadlock state.
 
-verified in 125 sec.
+verified in 20 sec.
 
 REMOVE FROGGER FROM THE SYSTEM DECLARATIONS BEFORE RUNNING THIS QUERY.</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-21 23:12:06 +0200">
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:49:56 +0200">
 			</result>
 		</query>
 		<query>
@@ -861,16 +878,16 @@ Query every object always remains inside the cyclic lane assigned to it.
 
 REMOVE FROGGER FROM THE SYSTEM DECLARATIONS BEFORE RUNNING THIS QUERY.
 
-verified in 66 sec.</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-21 23:13:22 +0200">
+verified in 10 sec.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:49:11 +0200">
 			</result>
 		</query>
 		<query>
 			<formula>E&lt;&gt; bayOccupied[0]</formula>
 			<comment> III) Frogger can eventually reach the first home bay  in position (0,12)–(1,12)
 
-verified in 35 sec.</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-21 23:27:40 +0200">
+verified in 8 sec.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:46:43 +0200">
 			</result>
 		</query>
 		<query>
@@ -878,8 +895,8 @@ verified in 35 sec.</comment>
 			<comment>IV) Frogger can score 17 points reaching the home bay in position (8,12)–(9,12).
 
 Bring back the Frog. 
-verified in 115 sec.</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-21 23:16:51 +0200">
+verified in 50 sec.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:45:22 +0200">
 			</result>
 		</query>
 		<query>
@@ -889,8 +906,8 @@ verified in 115 sec.</comment>
 For this query we dont need to initiialize all the rows. The next ones are enough to include the needed state and do not explode the state space. 
 Bring back the Frog. 
 
-verified in 60 sec.</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-21 23:22:27 +0200">
+verified in 10 sec.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:44:15 +0200">
 			</result>
 		</query>
 		<query>
@@ -900,7 +917,7 @@ verified in 60 sec.</comment>
 			<comment>VI) Frogger may stand on a log (with five lives) 10 seconds after the game starts.
 
 verified in 1 sec.</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-21 23:26:17 +0200">
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:43:59 +0200">
 			</result>
 		</query>
 		<query>
@@ -911,7 +928,7 @@ Frogger is about to die, and it's because a diving turtle is currently submerged
 At the one instant that state is observable before EvaluateSafety transitions him back to Respawning.
 
 verified in 1 sec.</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-21 23:25:31 +0200">
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:43:51 +0200">
 			</result>
 		</query>
 	</queries>
