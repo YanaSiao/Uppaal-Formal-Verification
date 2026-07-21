@@ -1,32 +1,41 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
 <nta>
-	<declaration>// Place global declarations here.
-
-
-/************************************************************
- *                     MAP CONSTANTS
+	<declaration>/************************************************************
+ *                     CONSTANTS
  ************************************************************/
+//---SPACE
 
 const int WIDTH  = 18;
 const int HEIGHT = 13;
 const int BORDER_DELAY = 2;
 
-const int MAX_LIVES = 5;            //!!!!!!!
-const int NUM_HOME_BAYS = 5;
-
-const int INITIAL_TIME_LIMIT = 300;   // 30 s
-
 const int MAX_PER_ROW = 4;
 const int NUM_MOVING_ROWS = 12;
-
-const int TIME_UNITS_PER_SECOND = 10;
 const int TOTAL_LOOP = WIDTH + BORDER_DELAY;
 
 //frog starts from this point on the map
 const int START_X= 9;
 const int START_Y = 0;
 
+//--- GENERAL
+
+const int MAX_LIVES = 5;
+const int NUM_HOME_BAYS = 5;
+
+const int BAY_SCORE = 5; 
+const int LEVEL_SCORE = 100; 
+const int MOVE_SCORE = 1;
+
+//--- TIME
+
+const int TICK_PERIOD = 1;
+const int TIME_UNITS_PER_SECOND = 10;
+const int RESPAWN_DELAY = 20;         // 2 s
+const int INITIAL_TIME_LIMIT = 300;   // 30 s
+
+const int DIVE_THRESHOLD_ABOVE = 25;
+const int DIVE_THRESHOLD_SUBMERGED = 10;
 
 /************************************************************
  *                    ENUMERATIONS
@@ -60,7 +69,6 @@ Direction requestedMove;
  *              IMMUTABLE OBJECT DESCRIPTION
  ************************************************************/
 
-
 typedef struct
 {
     int row;                    // y coordinate
@@ -84,13 +92,9 @@ typedef struct
     int x[MAX_PER_ROW];
 } RowState;
 
-
 /************************************************************
  *                GAME STATE VARIABLES
  ************************************************************/
-
-//int frog_x = START_X;
-//int frog_y = START_Y;
 
 int[0, WIDTH-1] frog_x  = START_X;
 int[0, HEIGHT-1] frog_y  = START_Y;
@@ -321,7 +325,7 @@ clock c;
 </declaration>
 		<location id="id0" x="178" y="0">
 			<name x="153" y="-42">Running</name>
-			<label kind="invariant" x="162" y="26">c &lt;= 1</label>
+			<label kind="invariant" x="162" y="26">c &lt;= TICK_PERIOD</label>
 			<label kind="comments" x="-263" y="195">GlobalClock — the single real-valued clock in the entire NTA (variable c).
 Role: converts continuous dense time into a discrete sequence of tick! broadcasts,
 exactly 1 time unit apart (Assumption 1: 1 time unit = 0.1 s).
@@ -346,7 +350,7 @@ c = 0</label>
 		<transition id="id2">
 			<source ref="id0"/>
 			<target ref="id0"/>
-			<label kind="guard" x="391" y="-17">c == 1 &amp;&amp; globalTick &lt; currentLevelTimeLimit</label>
+			<label kind="guard" x="391" y="-17">c == TICK_PERIOD &amp;&amp; globalTick &lt; currentLevelTimeLimit</label>
 			<label kind="synchronisation" x="391" y="0">tick!</label>
 			<label kind="assignment" x="391" y="17">c = 0,
 globalTick++</label>
@@ -382,7 +386,7 @@ a committed location, unlike the short-lived signalling locations elsewhere.</la
 			<target ref="id5"/>
 			<label kind="guard" x="654" y="348">!allBaysOccupied()</label>
 			<label kind="synchronisation" x="663" y="374">reachBay?</label>
-			<label kind="assignment" x="663" y="399">score += 5,
+			<label kind="assignment" x="663" y="399">score += BAY_SCORE,
 frogReposition(),
 globalTick = 0</label>
 			<nail x="654" y="424"/>
@@ -400,7 +404,7 @@ globalTick = 0</label>
 			<target ref="id5"/>
 			<label kind="guard" x="297" y="297">allBaysOccupied()</label>
 			<label kind="synchronisation" x="297" y="314">reachBay?</label>
-			<label kind="assignment" x="297" y="331">score += 100,
+			<label kind="assignment" x="297" y="331">score += LEVEL_SCORE,
 finishCurrentLevel()</label>
 			<nail x="365" y="306"/>
 		</transition>
@@ -414,7 +418,7 @@ finishCurrentLevel()</label>
 		<transition id="id10">
 			<source ref="id5"/>
 			<target ref="id4"/>
-			<label kind="guard" x="-161" y="-366">frogMoveTimer &gt;=20</label>
+			<label kind="guard" x="-161" y="-366">frogMoveTimer &gt;=RESPAWN_DELAY</label>
 			<label kind="synchronisation" x="-161" y="-340">frogInitPosition!</label>
 			<label kind="assignment" x="-161" y="-323">frogMoveTimer = 0</label>
 			<nail x="-161" y="-289"/>
@@ -422,7 +426,7 @@ finishCurrentLevel()</label>
 		<transition id="id11">
 			<source ref="id5"/>
 			<target ref="id5"/>
-			<label kind="guard" x="-229" y="442">frogMoveTimer  &lt; 20</label>
+			<label kind="guard" x="-229" y="442">frogMoveTimer  &lt; RESPAWN_DELAY</label>
 			<label kind="synchronisation" x="-229" y="467">tick?</label>
 			<label kind="assignment" x="-230" y="489">frogMoveTimer++</label>
 			<nail x="-238" y="429"/>
@@ -470,26 +474,58 @@ finishCurrentLevel()</label>
 		<name>RowRoad</name>
 		<parameter>const int id</parameter>
 		<declaration>// describes roads, logs, turtles in horizontal movement
-//------------------------------------------------------ROWS---------------------------
 
-//shift all the objects in the row simultaneously 
+// Drags Frogger by one cell in this object's direction of travel, using the
+// object's PRE-shift front position (frontX) to decide whether Frogger is
+// currently riding it. Wraps modulo TOTAL_LOOP, identical to the object's own
+// wrap rule, so Frogger can be carried through the two invisible transit cells
+// exactly as the object itself is.
+// Precondition (enforced by the caller, not here): row `y` is a LOG/TURTLE/
+// DIVING_TURTLE row and frog_y == y — this function assumes both already hold.
+void dragFrogIfRiding(int y, int obj)
+{
+    if (!isCellOccupied(y, obj, frog_x))
+        return;
+
+    if (rowInfo[y].moveLeft)
+        frog_x = (frog_x - 1 + TOTAL_LOOP) % TOTAL_LOOP;
+    else
+        frog_x = (frog_x + 1) % TOTAL_LOOP;
+}
+
+// Shifts every object in row `y` by one cell. Before shifting, drags Frogger
+// along if he's riding one of this row's objects — but ONLY for rows that can
+// carry him (LOG/TURTLE/DIVING_TURTLE); road rows (VEHICLE/TRUCK) skip the
+// check entirely; this is why the type test sits at the CALL SITE rather than
+// inside dragFrogIfRiding, avoiding a wasted call/check on the majority of rows.
 void moveRow(int y)
 {
     int obj;
+
+    // Computed once per row update, not per object: is this row capable of
+    // carrying Frogger, and is he actually standing in it right now?
+    bool canDrag = (rowInfo[y].type == LOG ||
+                     rowInfo[y].type == TURTLE ||
+                     rowInfo[y].type == DIVING_TURTLE) &amp;&amp;
+                    frog_y == y;
+
     for(obj = 0; obj &lt; rowInfo[y].numObjects; obj++)
     {
+        if (canDrag)
+            dragFrogIfRiding(y, obj);
+
         if(rowInfo[y].moveLeft)
         {
             rowState[y].x[obj]--;
             if (rowState[y].x[obj] &lt; 0) {
-                rowState[y].x[obj] = TOTAL_LOOP - 1; // Wraps directly to 19
+                rowState[y].x[obj] = TOTAL_LOOP - 1;
             }
         }
         else
         {
             rowState[y].x[obj]++;
             if (rowState[y].x[obj] &gt;= TOTAL_LOOP) {
-                rowState[y].x[obj] = 0; // Wraps directly to 0
+                rowState[y].x[obj] = 0;
             }
         }
     }
@@ -546,7 +582,7 @@ timer counts ticks within the current phase and is reset on each transition.</la
 		<transition id="id23">
 			<source ref="id22"/>
 			<target ref="id22"/>
-			<label kind="guard" x="416" y="-34">timer &lt; 10</label>
+			<label kind="guard" x="416" y="-34">timer &lt; DIVE_THRESHOLD_SUBMERGED</label>
 			<label kind="synchronisation" x="416" y="-17">tick?</label>
 			<label kind="assignment" x="416" y="0">timer++</label>
 			<nail x="391" y="102"/>
@@ -555,7 +591,7 @@ timer counts ticks within the current phase and is reset on each transition.</la
 		<transition id="id24">
 			<source ref="id21"/>
 			<target ref="id21"/>
-			<label kind="guard" x="-552" y="-59">timer &lt; 25</label>
+			<label kind="guard" x="-552" y="-59">timer &lt; DIVE_THRESHOLD_ABOVE</label>
 			<label kind="synchronisation" x="-552" y="-42">tick?</label>
 			<label kind="assignment" x="-552" y="-25">timer++</label>
 			<nail x="-434" y="-63"/>
@@ -564,7 +600,7 @@ timer counts ticks within the current phase and is reset on each transition.</la
 		<transition id="id25">
 			<source ref="id22"/>
 			<target ref="id21"/>
-			<label kind="guard" x="-85" y="-221">timer &gt;= 10</label>
+			<label kind="guard" x="-85" y="-221">timer &gt;= DIVE_THRESHOLD_SUBMERGED</label>
 			<label kind="synchronisation" x="-85" y="-204">tick?</label>
 			<label kind="assignment" x="-85" y="-187">timer = 0,
 isSubmerged = false</label>
@@ -573,7 +609,7 @@ isSubmerged = false</label>
 		<transition id="id26">
 			<source ref="id21"/>
 			<target ref="id22"/>
-			<label kind="guard" x="-68" y="161">timer &gt;= 25</label>
+			<label kind="guard" x="-68" y="161">timer &gt;= DIVE_THRESHOLD_ABOVE</label>
 			<label kind="synchronisation" x="-68" y="178">tick?</label>
 			<label kind="assignment" x="-68" y="195">timer = 0,
 isSubmerged = true</label>
@@ -771,7 +807,7 @@ since both persist across many ticks while waiting for the next event.</label>
 			<target ref="id28"/>
 			<label kind="guard" x="-25" y="-229">checkCollision() == false &amp;&amp;
 map[frog_y] != HOME</label>
-			<label kind="assignment" x="-25" y="-187">score+=1</label>
+			<label kind="assignment" x="-25" y="-187">score+=MOVE_SCORE</label>
 		</transition>
 		<transition id="id33">
 			<source ref="id29"/>
