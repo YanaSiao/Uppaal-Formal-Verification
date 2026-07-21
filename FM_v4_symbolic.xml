@@ -89,17 +89,21 @@ typedef struct
  *                GAME STATE VARIABLES
  ************************************************************/
 
-int frog_x = START_X;
-int frog_y = START_Y;
+//int frog_x = START_X;
+//int frog_y = START_Y;
 
-int score = 0;
-int lives = MAX_LIVES;
+int[0, WIDTH-1] frog_x  = START_X;
+int[0, HEIGHT-1] frog_y  = START_Y;
+
+// max reachable: 100 (level) + 25 (5 bays*5) + no more than 165 *5 (moves up) = 950
+int [0, 1000] score = 0; 
+int[0, MAX_LIVES] lives = MAX_LIVES;
 
 bool bayOccupied[NUM_HOME_BAYS];
 
-int[0, INITIAL_TIME_LIMIT] globalTick;
-int currentLevelTimeLimit = INITIAL_TIME_LIMIT;
-int currentLevel;
+int[0, INITIAL_TIME_LIMIT] globalTick = 0;
+int[0, INITIAL_TIME_LIMIT] currentLevelTimeLimit = INITIAL_TIME_LIMIT;
+int [0,1] currentLevel;
 
 /************************************************************
  *                 STATIC MAP
@@ -144,15 +148,12 @@ const int rowFirstGroup[HEIGHT] =
 
 broadcast chan tick;
 
-broadcast chan restart;
-broadcast chan gameOver;
+broadcast chan timeOut;
 
 broadcast chan moveRequest;
 broadcast chan frogInitPosition;
 broadcast chan reachBay;
 broadcast chan loseOneLife;
-
-broadcast chan finishLevel;
 
 /************************************************************
  *            OBJECT DECLARATIONS
@@ -188,7 +189,7 @@ const RowInfo rowInfo[NUM_MOVING_ROWS] =
 RowState rowState[NUM_MOVING_ROWS];
 
 
-bool isSubmerged[NUM_MOVING_ROWS];
+bool isSubmerged;
 
 //------------------------------------------------------INIT---------------------------
 void initializeRows()
@@ -201,11 +202,11 @@ void initializeRows()
         {
             rowState[y].x[obj] = rowInfo[y].initialX[obj];
         }
-
-        // Only meaningful for diving turtle rows.
-        // Other rows ignore this value.
-        isSubmerged[y] = false;
     }
+
+    // Only meaningful for diving turtle rows.
+    // Other rows ignore this value.
+    isSubmerged = false;
 }
 
 void clearHomeBays()
@@ -230,7 +231,7 @@ void frogReposition()
 
 void startNewLevel()
 {
-    //currentLevel++;
+    currentLevel++;
 
     clearHomeBays();
 
@@ -308,79 +309,103 @@ void occupyHomeBay()
 </declaration>
 	<template>
 		<name>GlobalClock</name>
-		<declaration>clock c;
+		<declaration>/*
+ * GlobalClock — the single real-valued clock in the entire NTA (variable c).
+ * Role: converts continuous dense time into a discrete sequence of tick! broadcasts, exactly 1 time unit apart (Assumption 1: 1 time unit = 0.1 s).
+ * Every other template reacts only to tick? and to bounded integer counters derived from it — this is the ONLY clock in the whole model, so the DBM/zone dimension stays
+ * at 1 regardless of how many processes are composed, which is what keeps verification tractable given the number of moving-row instances.
+ * Also fires timeOut! the instant globalTick reaches currentLevelTimeLimit, then resets both the clock and the tick counter for the next attempt.
+ */
+
+clock c;
 </declaration>
 		<location id="id0" x="178" y="0">
 			<name x="153" y="-42">Running</name>
 			<label kind="invariant" x="162" y="26">c &lt;= 1</label>
+			<label kind="comments" x="-306" y="178">GlobalClock — the single real-valued clock in the entire NTA (variable c).
+Role: converts continuous dense time into a discrete sequence of tick! broadcasts,
+exactly 1 time unit apart (Assumption 1: 1 time unit = 0.1 s).
+Every other template reacts only to tick? and to bounded integer counters derived
+from it — this is the ONLY clock in the whole model, so the DBM/zone dimension stays
+at 1 regardless of how many processes are composed, which is what keeps verification
+tractable given the number of moving-row instances.
+Also fires timeOut! the instant globalTick reaches currentLevelTimeLimit, then resets
+both the clock and the tick counter for the next attempt.</label>
 		</location>
 		<init ref="id0"/>
 		<transition id="id1">
 			<source ref="id0"/>
 			<target ref="id0"/>
-			<label kind="guard" x="391" y="-26">c == 1 &amp;&amp; globalTick &lt; currentLevelTimeLimit</label>
-			<label kind="synchronisation" x="391" y="-9">tick!</label>
-			<label kind="assignment" x="391" y="8">c = 0,
+			<label kind="guard" x="-314" y="-17">globalTick &gt;= currentLevelTimeLimit</label>
+			<label kind="synchronisation" x="-314" y="0">timeOut!</label>
+			<label kind="assignment" x="-314" y="17">globalTick = 0,
+c = 0</label>
+			<nail x="0" y="-68"/>
+			<nail x="0" y="68"/>
+		</transition>
+		<transition id="id2">
+			<source ref="id0"/>
+			<target ref="id0"/>
+			<label kind="guard" x="391" y="-17">c == 1 &amp;&amp; globalTick &lt; currentLevelTimeLimit</label>
+			<label kind="synchronisation" x="391" y="0">tick!</label>
+			<label kind="assignment" x="391" y="17">c = 0,
 globalTick++</label>
-			<nail x="374" y="-60"/>
-			<nail x="374" y="84"/>
+			<nail x="374" y="-68"/>
+			<nail x="374" y="68"/>
 		</transition>
 	</template>
 	<template>
 		<name>GameManager</name>
-		<declaration>int frogMoveTimer  = 0;</declaration>
-		<location id="id2" x="-697" y="297">
+		<declaration>int [0, 20] frogMoveTimer  = 0;</declaration>
+		<location id="id3" x="-697" y="297">
 			<name x="-716" y="313">Start</name>
 		</location>
-		<location id="id3" x="357" y="-297">
+		<location id="id4" x="357" y="-297">
 			<name x="347" y="-331">Playing</name>
 			<label kind="invariant" x="348" y="-356">lives &gt; 0</label>
-		</location>
-		<location id="id4" x="-697" y="42">
-			<name x="-723" y="8">GameOver</name>
 		</location>
 		<location id="id5" x="-161" y="306">
 			<name x="-314" y="306">WaitingRespawn</name>
 		</location>
-		<init ref="id2"/>
+		<init ref="id3"/>
 		<transition id="id6">
-			<source ref="id3"/>
+			<source ref="id4"/>
 			<target ref="id5"/>
-			<label kind="guard" x="782" y="425">!allBaysOccupied()</label>
-			<label kind="synchronisation" x="791" y="451">reachBay?</label>
-			<label kind="assignment" x="791" y="476">score += 5</label>
-			<nail x="782" y="501"/>
-			<nail x="170" y="493"/>
+			<label kind="guard" x="654" y="348">!allBaysOccupied()</label>
+			<label kind="synchronisation" x="663" y="374">reachBay?</label>
+			<label kind="assignment" x="663" y="399">score += 5,
+frogReposition(),
+globalTick = 0</label>
+			<nail x="654" y="424"/>
+			<nail x="314" y="493"/>
 		</transition>
 		<transition id="id7">
-			<source ref="id3"/>
+			<source ref="id4"/>
 			<target ref="id5"/>
 			<label kind="synchronisation" x="-76" y="-34">loseOneLife?</label>
 			<label kind="assignment" x="-75" y="-8">loseLife()</label>
 			<nail x="-85" y="-34"/>
 		</transition>
 		<transition id="id8">
-			<source ref="id3"/>
+			<source ref="id4"/>
 			<target ref="id5"/>
-			<label kind="guard" x="442" y="297">allBaysOccupied()</label>
-			<label kind="synchronisation" x="442" y="314">reachBay?</label>
-			<label kind="assignment" x="442" y="331">score += 100,
+			<label kind="guard" x="297" y="297">allBaysOccupied()</label>
+			<label kind="synchronisation" x="297" y="314">reachBay?</label>
+			<label kind="assignment" x="297" y="331">score += 100,
 finishCurrentLevel()</label>
-			<nail x="510" y="306"/>
+			<nail x="365" y="306"/>
 		</transition>
 		<transition id="id9">
-			<source ref="id3"/>
+			<source ref="id4"/>
 			<target ref="id5"/>
-			<label kind="guard" x="119" y="85">globalTick &gt;= currentLevelTimeLimit</label>
-			<label kind="synchronisation" x="119" y="111">tick?</label>
-			<label kind="assignment" x="119" y="136">loseLife(),
-globalTick = 0</label>
+			<label kind="synchronisation" x="144" y="119">timeOut?</label>
+			<label kind="assignment" x="144" y="144">loseLife()</label>
 			<nail x="255" y="119"/>
 		</transition>
 		<transition id="id10">
 			<source ref="id5"/>
-			<target ref="id3"/>
-			<label kind="guard" x="-161" y="-366">frogMoveTimer &gt;=19</label>
+			<target ref="id4"/>
+			<label kind="guard" x="-161" y="-366">frogMoveTimer &gt;=20</label>
 			<label kind="synchronisation" x="-161" y="-340">frogInitPosition!</label>
 			<label kind="assignment" x="-161" y="-323">frogMoveTimer = 0</label>
 			<nail x="-161" y="-289"/>
@@ -388,62 +413,46 @@ globalTick = 0</label>
 		<transition id="id11">
 			<source ref="id5"/>
 			<target ref="id5"/>
-			<label kind="guard" x="-229" y="442">frogMoveTimer  &lt; 19</label>
+			<label kind="guard" x="-229" y="442">frogMoveTimer  &lt; 20</label>
 			<label kind="synchronisation" x="-229" y="467">tick?</label>
 			<label kind="assignment" x="-230" y="489">frogMoveTimer++</label>
 			<nail x="-238" y="429"/>
 			<nail x="-68" y="429"/>
 		</transition>
 		<transition id="id12">
-			<source ref="id4"/>
-			<target ref="id4"/>
-			<label kind="synchronisation" x="-892" y="25">tick?</label>
-			<nail x="-842" y="-14"/>
-			<nail x="-842" y="80"/>
-		</transition>
-		<transition id="id13">
-			<source ref="id4"/>
-			<target ref="id2"/>
-			<label kind="synchronisation" x="-782" y="178">restart?</label>
-		</transition>
-		<transition id="id14">
-			<source ref="id5"/>
-			<target ref="id4"/>
-			<label kind="guard" x="-569" y="59">lives &lt; 1</label>
-			<label kind="synchronisation" x="-569" y="84">gameOver!</label>
-		</transition>
-		<transition id="id15">
-			<source ref="id2"/>
+			<source ref="id3"/>
 			<target ref="id5"/>
 			<label kind="assignment" x="-578" y="323">initializeGame()</label>
 		</transition>
 	</template>
 	<template>
 		<name>MovementController</name>
-		<location id="id16" x="-161" y="-17">
+		<location id="id13" x="-161" y="-17">
 			<name x="-127" y="-25">Ready</name>
 		</location>
-		<location id="id17" x="-161" y="-221">
+		<location id="id14" x="-161" y="-221">
 			<name x="-127" y="-229">SendDirection</name>
+			<committed/>
 		</location>
-		<location id="id18" x="-161" y="-425">
+		<location id="id15" x="-161" y="-425">
 			<name x="-119" y="-433">Move</name>
+			<committed/>
 		</location>
-		<init ref="id16"/>
-		<transition id="id19">
-			<source ref="id18"/>
-			<target ref="id16"/>
+		<init ref="id13"/>
+		<transition id="id16">
+			<source ref="id15"/>
+			<target ref="id13"/>
 			<nail x="-391" y="-425"/>
 			<nail x="-391" y="-17"/>
 		</transition>
-		<transition id="id20">
-			<source ref="id17"/>
-			<target ref="id18"/>
+		<transition id="id17">
+			<source ref="id14"/>
+			<target ref="id15"/>
 			<label kind="synchronisation" x="-119" y="-340">moveRequest!</label>
 		</transition>
-		<transition id="id21">
-			<source ref="id16"/>
-			<target ref="id17"/>
+		<transition id="id18">
+			<source ref="id13"/>
+			<target ref="id14"/>
 			<label kind="synchronisation" x="-136" y="-136">tick?</label>
 			<label kind="assignment" x="-136" y="-119">requestedMove = UP</label>
 		</transition>
@@ -483,13 +492,13 @@ void updateRow(int y)
     if(globalTick % rowInfo[y].speed == 0)
         moveRow(y);
 }</declaration>
-		<location id="id22" x="280" y="0">
+		<location id="id19" x="280" y="0">
 			<name x="255" y="-42">Running</name>
 		</location>
-		<init ref="id22"/>
-		<transition id="id23">
-			<source ref="id22"/>
-			<target ref="id22"/>
+		<init ref="id19"/>
+		<transition id="id20">
+			<source ref="id19"/>
+			<target ref="id19"/>
 			<label kind="synchronisation" x="594" y="-51">tick?</label>
 			<label kind="assignment" x="594" y="-34">updateRow(id)</label>
 			<nail x="586" y="-127"/>
@@ -498,83 +507,50 @@ void updateRow(int y)
 	</template>
 	<template>
 		<name>DivingTurtle</name>
-		<parameter>const int id</parameter>
-		<declaration>int timer = 0;
+		<declaration>int [0, 26]timer = 0;
 </declaration>
-		<location id="id24" x="-289" y="8">
-			<name x="-299" y="-26">Emerged</name>
+		<location id="id21" x="-289" y="8">
+			<name x="-323" y="-34">AboveWater</name>
 		</location>
-		<location id="id25" x="272" y="25">
+		<location id="id22" x="272" y="25">
 			<name x="262" y="-9">Submerged</name>
 		</location>
-		<location id="id26" x="-17" y="-212">
-			<name x="-27" y="-246">Emerging</name>
-		</location>
-		<location id="id27" x="-8" y="204">
-			<name x="-18" y="170">Diving</name>
-		</location>
-		<init ref="id24"/>
-		<transition id="id28">
-			<source ref="id26"/>
-			<target ref="id26"/>
-			<label kind="synchronisation" x="-51" y="-391">tick?</label>
-			<label kind="assignment" x="-51" y="-374">timer++</label>
-			<nail x="85" y="-323"/>
-			<nail x="-102" y="-323"/>
-		</transition>
-		<transition id="id29">
-			<source ref="id25"/>
-			<target ref="id25"/>
+		<init ref="id21"/>
+		<transition id="id23">
+			<source ref="id22"/>
+			<target ref="id22"/>
+			<label kind="guard" x="416" y="-34">timer &lt; 11</label>
 			<label kind="synchronisation" x="416" y="-17">tick?</label>
 			<label kind="assignment" x="416" y="0">timer++</label>
 			<nail x="391" y="102"/>
 			<nail x="391" y="-51"/>
 		</transition>
-		<transition id="id30">
-			<source ref="id27"/>
-			<target ref="id27"/>
-			<label kind="synchronisation" x="-51" y="306">tick?</label>
-			<label kind="assignment" x="-51" y="323">timer++</label>
-			<nail x="-68" y="289"/>
-			<nail x="59" y="289"/>
-		</transition>
-		<transition id="id31">
-			<source ref="id24"/>
-			<target ref="id24"/>
+		<transition id="id24">
+			<source ref="id21"/>
+			<target ref="id21"/>
+			<label kind="guard" x="-552" y="-59">timer &lt; 26</label>
 			<label kind="synchronisation" x="-552" y="-42">tick?</label>
 			<label kind="assignment" x="-552" y="-25">timer++</label>
 			<nail x="-434" y="-63"/>
 			<nail x="-434" y="64"/>
 		</transition>
-		<transition id="id32">
-			<source ref="id26"/>
-			<target ref="id24"/>
-			<label kind="guard" x="-272" y="-161">timer &gt;= 9</label>
-			<label kind="synchronisation" x="-272" y="-144">tick?</label>
-			<label kind="assignment" x="-272" y="-127">timer = 0</label>
+		<transition id="id25">
+			<source ref="id22"/>
+			<target ref="id21"/>
+			<label kind="guard" x="-85" y="-221">timer &gt;= 10</label>
+			<label kind="synchronisation" x="-85" y="-204">tick?</label>
+			<label kind="assignment" x="-85" y="-187">timer = 0,
+isSubmerged = false</label>
+			<nail x="-34" y="-119"/>
 		</transition>
-		<transition id="id33">
-			<source ref="id25"/>
-			<target ref="id26"/>
-			<label kind="guard" x="136" y="-161">timer &gt;= 9</label>
-			<label kind="synchronisation" x="136" y="-144">tick?</label>
-			<label kind="assignment" x="136" y="-127">timer = 0,
-isSubmerged[id] = false</label>
-		</transition>
-		<transition id="id34">
-			<source ref="id27"/>
-			<target ref="id25"/>
-			<label kind="guard" x="153" y="127">timer &gt;= 4</label>
-			<label kind="synchronisation" x="153" y="144">tick?</label>
-			<label kind="assignment" x="153" y="161">timer = 0,
-isSubmerged[id] = true</label>
-		</transition>
-		<transition id="id35">
-			<source ref="id24"/>
-			<target ref="id27"/>
-			<label kind="guard" x="-263" y="102">timer &gt;= 9</label>
-			<label kind="synchronisation" x="-263" y="119">tick?</label>
-			<label kind="assignment" x="-263" y="136">timer = 0</label>
+		<transition id="id26">
+			<source ref="id21"/>
+			<target ref="id22"/>
+			<label kind="guard" x="-68" y="161">timer &gt;= 25</label>
+			<label kind="synchronisation" x="-68" y="178">tick?</label>
+			<label kind="assignment" x="-68" y="195">timer = 0,
+isSubmerged = true</label>
+			<nail x="-17" y="136"/>
 		</transition>
 	</template>
 	<template>
@@ -676,9 +652,9 @@ bool checkCollision()
 
         //at this point it may be a log, a turtle group or a diving turtle group. Only diving turtles may be submerged.
 
-        if(isSubmerged[rowIndex])
+        if(rowInfo[rowIndex].type == DIVING_TURTLE &amp;&amp; isSubmerged)
         {
-            return true; // turtle disappeared
+            return true;
         }
         
     }
@@ -723,65 +699,66 @@ void moveFrog(Direction direction)
         
     }
 }</declaration>
-		<location id="id36" x="-221" y="102">
+		<location id="id27" x="-221" y="102">
 			<name x="-272" y="136">Respawning</name>
 		</location>
-		<location id="id37" x="-221" y="-238">
+		<location id="id28" x="-221" y="-238">
 			<name x="-231" y="-272">Playing</name>
 			<label kind="invariant" x="-246" y="-212">lives &gt; 0</label>
 		</location>
-		<location id="id38" x="374" y="-229">
+		<location id="id29" x="374" y="-229">
 			<name x="364" y="-263">EvaluateSafety</name>
+			<committed/>
 		</location>
-		<init ref="id36"/>
-		<transition id="id39">
-			<source ref="id37"/>
-			<target ref="id36"/>
+		<init ref="id27"/>
+		<transition id="id30">
+			<source ref="id28"/>
+			<target ref="id27"/>
 			<label kind="guard" x="-552" y="-187">globalTick &gt;= currentLevelTimeLimit</label>
 			<label kind="synchronisation" x="-552" y="-161">tick?</label>
 			<nail x="-518" y="-144"/>
 			<nail x="-518" y="59"/>
 		</transition>
-		<transition id="id40">
-			<source ref="id38"/>
-			<target ref="id36"/>
+		<transition id="id31">
+			<source ref="id29"/>
+			<target ref="id27"/>
 			<label kind="guard" x="222" y="-144">map[frog_y] == HOME</label>
 			<label kind="synchronisation" x="222" y="-127">reachBay!</label>
 			<label kind="assignment" x="222" y="-110">occupyHomeBay()</label>
 			<nail x="204" y="8"/>
 		</transition>
-		<transition id="id41">
-			<source ref="id38"/>
-			<target ref="id37"/>
+		<transition id="id32">
+			<source ref="id29"/>
+			<target ref="id28"/>
 			<label kind="guard" x="-25" y="-229">checkCollision() == false &amp;&amp;
 map[frog_y] != HOME</label>
 			<label kind="assignment" x="-25" y="-187">score+=1</label>
 		</transition>
-		<transition id="id42">
-			<source ref="id38"/>
-			<target ref="id36"/>
+		<transition id="id33">
+			<source ref="id29"/>
+			<target ref="id27"/>
 			<label kind="guard" x="382" y="0">checkCollision() == true</label>
 			<label kind="synchronisation" x="382" y="17">loseOneLife!</label>
 			<nail x="374" y="110"/>
 		</transition>
-		<transition id="id43">
-			<source ref="id37"/>
-			<target ref="id38"/>
+		<transition id="id34">
+			<source ref="id28"/>
+			<target ref="id29"/>
 			<label kind="synchronisation" x="170" y="-357">moveRequest?</label>
 			<label kind="assignment" x="170" y="-340">moveFrog(requestedMove)</label>
 			<nail x="76" y="-382"/>
 		</transition>
-		<transition id="id44">
-			<source ref="id37"/>
-			<target ref="id36"/>
+		<transition id="id35">
+			<source ref="id28"/>
+			<target ref="id27"/>
 			<label kind="guard" x="-552" y="-314">checkCollision() == true</label>
 			<label kind="synchronisation" x="-552" y="-289">loseOneLife!</label>
 			<nail x="-578" y="-238"/>
 			<nail x="-578" y="102"/>
 		</transition>
-		<transition id="id45">
-			<source ref="id36"/>
-			<target ref="id37"/>
+		<transition id="id36">
+			<source ref="id27"/>
+			<target ref="id28"/>
 			<label kind="synchronisation" x="-382" y="-42">frogInitPosition?</label>
 			<label kind="assignment" x="-382" y="-8">frogReposition(),
 globalTick = 0</label>
@@ -814,15 +791,15 @@ Diving10 = RowRoad(10);
 
 Log11 = RowRoad(11);
 
-DiveState7 = DivingTurtle(6);
-
-DiveState10 = DivingTurtle(10);
+DiveState = DivingTurtle();
 
 Frog = Frogger();
 system
-    Clock,
-    Movement, 
-    Game,
+    Frog,
+
+    Clock, //ok
+    Game, //ok
+    Movement, //ok
 
     Road1,
     Road2,
@@ -839,12 +816,9 @@ system
     Turtle10,
     Diving10,
 
-    Log11,
-
-    DiveState7,
-    DiveState10,
-
-    Frog;</system>
+    Log11, //ok, in a 17 seconds
+    
+    DiveState; //ok in 3 min</system>
 	<queries>
 		<query>
 			<formula>A[] Road1.Running
@@ -857,7 +831,13 @@ Query checks if x is the only mutable coordinate.</comment>
 		</query>
 		<query>
 			<formula>A[] not deadlock</formula>
-			<comment>I) Without considering Frogger: the game never reaches a deadlock state.</comment>
+			<comment>I) Without considering Frogger: the game never reaches a deadlock state.
+
+verified in 185 sec.
+
+REMOVE FROGGER FROM TEH SYSTEM DECLARATIONS BEFORE RUNNING THIS QUERRY.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-19 17:03:25 +0200">
+			</result>
 		</query>
 		<query>
 			<formula>A[]
@@ -869,9 +849,42 @@ forall(obj:int[0,MAX_PER_ROW-1])
 
 BY DESIGN no mutable rowInfo[y] exists. an Object cannot move from one line to another by design ().
 
-Query every object always remains inside the cyclic lane assigned to it.</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-12 18:12:41 +0200">
+Query every object always remains inside the cyclic lane assigned to it.
+
+REMOVE FROGGER FROM TEH SYSTEM DECLARATIONS BEFORE RUNNING THIS QUERRY.
+
+verified in 200 sec.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-17 19:14:39 +0200">
 			</result>
+		</query>
+		<query>
+			<formula>E&lt;&gt; bayOccupied[0]</formula>
+			<comment> III) Frogger can eventually reach the first home bay  in position (0,12)–(1,12)</comment>
+		</query>
+		<query>
+			<formula>E&lt;&gt; ((frog_y == 12 &amp;&amp; (frog_x == 8 || frog_x == 9)) &amp;&amp; score == 17)</formula>
+			<comment>IV) Frogger can score 17 points reaching the home bay in position (8,12)–(9,12).
+</comment>
+		</query>
+		<query>
+			<formula>E&lt;&gt; (lives &lt;= 3 &amp;&amp; frog_y == 6)</formula>
+			<comment>V) Frogger can reach a yellow cell in row 6 after the player has lost two lives.
+
+For this query we dont need to initiialize all the rows. The next ones are enough to include the needed state and do not explode the state space. 
+system Frog, Clock, Game, Movement, Road1, Road2, Road3, Road4, Road5;</comment>
+		</query>
+		<query>
+			<formula>E&lt;&gt; (time &gt;= 10 &amp;&amp; lives == 5 &amp;&amp; map[frog_y] == LOG)</formula>
+			<comment>VI) Frogger may stand on a log (with five lives) 10 seconds after the game starts.</comment>
+		</query>
+		<query>
+			<formula>E&lt;&gt; (dead &amp;&amp; isSubmerged)</formula>
+			<comment>VII) Frogger can die riding a diving turtle that transitions to the submerged state.
+</comment>
+		</query>
+		<query>
+			<formula>E&lt;&gt; (frog_y == 12 &amp;&amp; (frog_x == 0 ||frog_x == 1))</formula>
+			<comment/>
 		</query>
 	</queries>
 </nta>
