@@ -1,0 +1,918 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!DOCTYPE nta PUBLIC '-//Uppaal Team//DTD Flat System 1.6//EN' 'http://www.it.uu.se/research/group/darts/uppaal/flat-1_6.dtd'>
+<nta>
+	<declaration>/************************************************************
+ *                     CONSTANTS
+ ************************************************************/
+//---SPACE
+
+const int WIDTH  = 18;
+const int HEIGHT = 13;
+const int BORDER_DELAY = 2;
+
+const int MAX_PER_ROW = 4;
+const int NUM_MOVING_ROWS = 12;
+const int TOTAL_LOOP = WIDTH + BORDER_DELAY;
+
+//frog starts from this point on the map
+const int START_X= 9;
+const int START_Y = 0;
+
+//--- GENERAL
+
+const int MAX_LIVES = 5;
+const int NUM_HOME_BAYS = 5;
+
+const int BAY_SCORE = 5; 
+const int LEVEL_SCORE = 100; 
+const int MOVE_SCORE = 1;
+
+//--- TIME
+
+const int TICK_PERIOD = 1;
+const int TIME_UNITS_PER_SECOND = 10;
+const int RESPAWN_DELAY = 20;         // 2 s
+const int INITIAL_TIME_LIMIT = 300;   // 30 s
+
+const int DIVE_THRESHOLD_ABOVE = 25;
+const int DIVE_THRESHOLD_SUBMERGED = 10;
+
+/************************************************************
+ *                    ENUMERATIONS
+ ************************************************************/
+
+typedef int[0,3] TileType;
+
+const TileType SAFE  = 0;
+const TileType ROAD  = 1;
+const TileType RIVER = 2;
+const TileType HOME  = 3;
+
+typedef int[0,4] ObjectType;
+
+const ObjectType VEHICLE        = 0;
+const ObjectType TRUCK          = 1;
+const ObjectType LOG            = 2;
+const ObjectType TURTLE         = 3;
+const ObjectType DIVING_TURTLE  = 4;
+
+/************************************************************
+ *              IMMUTABLE OBJECT DESCRIPTION
+ ************************************************************/
+
+typedef struct
+{
+    int row;                    // y coordinate
+    int size;                   // vehicle length
+    int speed;                  // movement period
+    bool moveLeft;               // if true, then the object moves from right to left
+    
+    ObjectType type;
+    bool diving;          // only turtles may dive
+    int numObjects;
+    int initialX[MAX_PER_ROW];
+} RowInfo;
+
+
+/************************************************************
+ *              MUTABLE OBJECT STATE
+ ************************************************************/
+
+typedef struct
+{
+    int x[MAX_PER_ROW];
+} RowState;
+
+/************************************************************
+ *                GAME STATE VARIABLES
+ ************************************************************/
+
+int[0, TOTAL_LOOP-1] frog_x = START_X;
+int[0, HEIGHT-1] frog_y  = START_Y;
+
+// max reachable: 100 (level) + 25 (5 bays*5) + no more than 165 *5 (moves up) = 950
+int [0, 1000] score = 0; 
+int[0, MAX_LIVES] lives = MAX_LIVES;
+
+bool bayOccupied[NUM_HOME_BAYS];
+
+int[0, INITIAL_TIME_LIMIT] globalTick = 0;
+int[0, INITIAL_TIME_LIMIT] currentLevelTimeLimit = INITIAL_TIME_LIMIT;
+
+/************************************************************
+ *                 STATIC MAP
+ ************************************************************/
+
+const TileType map[HEIGHT] =
+{
+    SAFE,   // 0
+    ROAD,   // 1
+    ROAD,   // 2
+    ROAD,   // 3
+    ROAD,   // 4
+    ROAD,   // 5
+    SAFE,   // 6
+    RIVER,  // 7
+    RIVER,  // 8
+    RIVER,  // 9
+    RIVER,  //10
+    RIVER,  //11
+    HOME    //12
+};
+
+const int rowFirstGroup[HEIGHT] =
+{
+    -1, // 0 SAFE
+     0, // 1
+     1, // 2
+     2, // 3
+     3, // 4
+     4, // 5
+    -1, // 6 SAFE
+     5, // 7
+     7, // 8
+     8, // 9
+     9, //10
+    11, //11
+    -1  //12 HOME
+};
+/************************************************************
+ *              SYNCHRONIZATION CHANNELS
+ ************************************************************/
+
+broadcast chan tick;
+broadcast chan timeOut;
+
+broadcast chan frogInitPosition;
+
+broadcast chan reachBay;
+broadcast chan loseOneLife;
+
+/************************************************************
+ *            OBJECT DECLARATIONS
+ ************************************************************/
+const RowInfo rowInfo[NUM_MOVING_ROWS] =
+{
+    // row,size,speed,left,type,diving,numObj,{positions}
+
+    {1,1,3,true ,VEHICLE,false,2,{4,14,0,0}},
+    {2,1,10,false,VEHICLE,false,2,{2,11,0,0}},
+    {3,1,5,true ,VEHICLE,false,4,{4,8,13,17}},
+    {4,1,4,false,VEHICLE,false,2,{2,10,0,0}},
+    {5,2,7,true ,TRUCK,false,2,{4,15,0,0}},
+
+    // Row 7
+    {7,5,6,true ,TURTLE,false,1,{5,0,0,0}},
+    {7,5,6,true ,TURTLE ,true ,1,{13,0,0,0}},
+
+    // Row 8
+    {8,3,2,false,LOG,false,3,{7,11,15,0}},
+
+    // Row 9
+    {9,9,7,false,LOG,false,1,{3,0,0,0}},
+
+    // Row10
+    {10,3,2,true,TURTLE,false,1,{1,0,0,0}},
+    {10,3,2,true,TURTLE ,true ,1,{9,0,0,0}},
+
+    // Row11
+    {11,5,2,false,LOG,false,2,{1,11,0,0}}
+};
+
+RowState rowState[NUM_MOVING_ROWS];
+
+
+bool isSubmerged;
+
+//------------------------------------------------------INIT---------------------------
+void initializeRows()
+{
+    int y, obj;
+
+    for(y = 0; y &lt; NUM_MOVING_ROWS; y++)
+    {
+        for(obj = 0; obj &lt; rowInfo[y].numObjects; obj++)
+        {
+            rowState[y].x[obj] = rowInfo[y].initialX[obj];
+        }
+    }
+
+    // Only meaningful for diving turtle rows.
+    // Other rows ignore this value.
+    isSubmerged = false;
+}
+
+void clearHomeBays()
+{
+    int i;
+
+    for(i = 0; i &lt; NUM_HOME_BAYS; i++)
+        bayOccupied[i] = false;
+}
+
+
+void frogReposition()
+{
+    frog_x = START_X;
+    frog_y = START_Y;
+}
+
+
+void startNewLevel()
+{
+    clearHomeBays();
+
+    frogReposition();
+
+    globalTick = 0;
+}
+
+void finishCurrentLevel()
+{
+    score += 100;
+
+    startNewLevel();
+}
+
+void initializeGame()
+{
+    initializeRows();
+
+    lives = MAX_LIVES;
+
+    score = 0;
+
+    startNewLevel();
+
+}
+
+int getHomeBayIndex(int x)
+{
+    int block = x / 4;
+
+    // Outside the five home blocks
+    if(block &gt;= NUM_HOME_BAYS)
+        return -1;
+
+    // Only the first two cells of each block are a bay
+    if(x % 4 &gt;= 2)
+        return -1;
+
+    return block;
+}
+
+//--------------------
+void loseLife()
+{
+    lives--;
+
+    frogReposition();
+}
+
+//---------------------------------------------BAYS---------------------
+bool allBaysOccupied()
+{
+    int i;
+
+    for(i = 0; i &lt; NUM_HOME_BAYS; i++)
+    {
+        if(!bayOccupied[i])
+            return false;
+    }
+
+    return true;
+}
+
+
+void occupyHomeBay()
+{
+    int bay = getHomeBayIndex(frog_x);
+
+    bayOccupied[bay] = true;
+
+}
+
+//------------------------------------------------------FROGGER---------------------------
+
+// inside rowInfo entry 'rowIndex'
+bool isCellOccupied(int rowIndex, int obj, int target_x)
+{
+    int size = rowInfo[rowIndex].size;
+    bool moveLeft = rowInfo[rowIndex].moveLeft;
+    int frontX = rowState[rowIndex].x[obj];
+    int i;
+
+    for(i = 0; i &lt; size; i++)
+    {
+        int bodyPartX;
+
+        if(moveLeft)
+        {
+            bodyPartX = (frontX + i + TOTAL_LOOP) % TOTAL_LOOP;
+        }
+        else
+        {
+            bodyPartX = (frontX - i + TOTAL_LOOP) % TOTAL_LOOP;
+        }
+
+        if(bodyPartX == target_x)
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+// Returns the rowInfo index of the object group occupying target_x.
+// Returns -1 if no object is found.
+int getObjectAtPosition(int y, int target_x)
+{
+    int row = rowFirstGroup[y];
+
+    if(row == -1)
+        return -1;
+
+    do
+    {
+        int obj;
+
+        for(obj = 0; obj &lt; rowInfo[row].numObjects; obj++)
+        {
+            if(isCellOccupied(row, obj, target_x))
+                return row;
+        }
+
+        row++;
+    }
+    while(row &lt; NUM_MOVING_ROWS &amp;&amp;
+          rowInfo[row].row == y);
+
+    return -1;
+}
+
+
+bool checkCollision()
+{
+    // Safe rows or Win row -&gt; No collision danger
+    if (map[frog_y] == SAFE || map[frog_y] == HOME)
+    {
+        return false;
+    }
+
+
+    // Road Rows: Cars kill frog
+    if (map[frog_y] == ROAD)
+    {
+        if(getObjectAtPosition(frog_y, frog_x) != -1)
+        {
+            return true;
+        }
+    }
+
+
+    // River Rows: Frog must stand on something safe
+    if (map[frog_y] == RIVER)
+    {
+        int rowIndex  = getObjectAtPosition(frog_y, frog_x);
+
+
+        // Nothing under frog -&gt; drown
+        if(rowIndex  == -1)
+        {
+            return true;
+        }
+
+        //at this point it may be a log, a turtle group or a diving turtle group. Only diving turtles may be submerged.
+
+        if(rowInfo[rowIndex].type == DIVING_TURTLE &amp;&amp; isSubmerged)
+        {
+            return true;
+        }
+        
+    }
+
+
+    return false;
+}
+</declaration>
+	<template>
+		<name>GlobalClock</name>
+		<declaration>/*
+ * GlobalClock — the single real-valued clock in the entire NTA (variable c).
+ * Role: converts continuous dense time into a discrete sequence of tick! broadcasts, exactly 1 time unit apart (Assumption 1: 1 time unit = 0.1 s).
+ * Every other template reacts only to tick? and to bounded integer counters derived from it — this is the ONLY clock in the whole model, so the DBM/zone dimension stays
+ * at 1 regardless of how many processes are composed, which is what keeps verification tractable given the number of moving-row instances.
+ * Also fires timeOut! the instant globalTick reaches currentLevelTimeLimit, then resets both the clock and the tick counter for the next attempt.
+ */
+
+clock c;
+</declaration>
+		<location id="id0" x="178" y="0">
+			<name x="153" y="-42">Running</name>
+			<label kind="invariant" x="162" y="26">c &lt;= TICK_PERIOD</label>
+			<label kind="comments" x="-263" y="195">GlobalClock — the single real-valued clock in the entire NTA (variable c).
+Role: converts continuous dense time into a discrete sequence of tick! broadcasts,
+exactly 1 time unit apart (Assumption 1: 1 time unit = 0.1 s).
+Every other template reacts only to tick? and to bounded integer counters derived
+from it — this is the ONLY clock in the whole model, so the DBM/zone dimension stays
+at 1 regardless of how many processes are composed, which is what keeps verification
+tractable given the number of moving-row instances.
+Also fires timeOut! the instant globalTick reaches currentLevelTimeLimit, then resets
+both the clock and the tick counter for the next attempt.</label>
+		</location>
+		<init ref="id0"/>
+		<transition id="id1">
+			<source ref="id0"/>
+			<target ref="id0"/>
+			<label kind="guard" x="-314" y="-17">globalTick &gt;= currentLevelTimeLimit</label>
+			<label kind="synchronisation" x="-314" y="0">timeOut!</label>
+			<label kind="assignment" x="-314" y="17">globalTick = 0,
+c = 0</label>
+			<nail x="0" y="-68"/>
+			<nail x="0" y="68"/>
+		</transition>
+		<transition id="id2">
+			<source ref="id0"/>
+			<target ref="id0"/>
+			<label kind="guard" x="391" y="-17">c == TICK_PERIOD &amp;&amp; globalTick &lt; currentLevelTimeLimit</label>
+			<label kind="synchronisation" x="391" y="0">tick!</label>
+			<label kind="assignment" x="391" y="17">c = 0,
+globalTick++</label>
+			<nail x="374" y="-68"/>
+			<nail x="374" y="68"/>
+		</transition>
+	</template>
+	<template>
+		<name>GameManager</name>
+		<declaration>int [0, 20] frogMoveTimer  = 0;</declaration>
+		<location id="id3" x="-612" y="314">
+			<name x="-631" y="330">Start</name>
+			<label kind="comments" x="-646" y="569">GameManager — owns the meta-game state: lives, score, and the overall attempt
+lifecycle (Start -&gt; WaitingRespawn -&gt; Playing -&gt; WaitingRespawn -&gt; ...).
+Role: reacts to reachBay? (award points, and on all-bays-occupied, complete the
+level), loseOneLife? and timeOut? (decrement a life and reset the attempt).
+frogMoveTimer enforces the "Frogger may move again only 2 seconds after death or
+a bay reach" rule (2s = 20 time units at 0.1s/unit): it counts ticks while in
+WaitingRespawn and only fires frogInitPosition! once the threshold is reached.
+WaitingRespawn intentionally spans many ticks (real waiting) and is therefore NOT
+a committed location, unlike the short-lived signalling locations elsewhere.</label>
+		</location>
+		<location id="id4" x="544" y="-102">
+			<name x="534" y="-136">Playing</name>
+			<label kind="invariant" x="535" y="-161">lives &gt; 0</label>
+		</location>
+		<location id="id5" x="-170" y="314">
+			<name x="-323" y="314">WaitingRespawn</name>
+		</location>
+		<init ref="id3"/>
+		<transition id="id6">
+			<source ref="id4"/>
+			<target ref="id5"/>
+			<label kind="guard" x="382" y="323">!allBaysOccupied()</label>
+			<label kind="synchronisation" x="391" y="349">reachBay?</label>
+			<label kind="assignment" x="391" y="374">score += BAY_SCORE,
+frogReposition(),
+globalTick = 0</label>
+			<nail x="544" y="314"/>
+		</transition>
+		<transition id="id7">
+			<source ref="id4"/>
+			<target ref="id5"/>
+			<label kind="synchronisation" x="41" y="93">loseOneLife?</label>
+			<label kind="assignment" x="42" y="119">loseLife()</label>
+			<nail x="8" y="93"/>
+		</transition>
+		<transition id="id8">
+			<source ref="id4"/>
+			<target ref="id5"/>
+			<label kind="guard" x="297" y="170">allBaysOccupied()</label>
+			<label kind="synchronisation" x="297" y="187">reachBay?</label>
+			<label kind="assignment" x="297" y="204">score += LEVEL_SCORE,
+finishCurrentLevel()</label>
+			<nail x="365" y="179"/>
+		</transition>
+		<transition id="id9">
+			<source ref="id4"/>
+			<target ref="id5"/>
+			<label kind="synchronisation" x="255" y="68">timeOut?</label>
+			<label kind="assignment" x="255" y="93">loseLife()</label>
+			<nail x="366" y="68"/>
+		</transition>
+		<transition id="id10">
+			<source ref="id5"/>
+			<target ref="id4"/>
+			<label kind="guard" x="-127" y="-179">frogMoveTimer &gt;=RESPAWN_DELAY</label>
+			<label kind="synchronisation" x="-127" y="-153">frogInitPosition!</label>
+			<label kind="assignment" x="-127" y="-136">frogMoveTimer = 0</label>
+			<nail x="-170" y="-110"/>
+		</transition>
+		<transition id="id11">
+			<source ref="id5"/>
+			<target ref="id5"/>
+			<label kind="guard" x="-238" y="450">frogMoveTimer  &lt; RESPAWN_DELAY</label>
+			<label kind="synchronisation" x="-238" y="475">tick?</label>
+			<label kind="assignment" x="-239" y="497">frogMoveTimer++</label>
+			<nail x="-247" y="437"/>
+			<nail x="-77" y="437"/>
+		</transition>
+		<transition id="id12">
+			<source ref="id3"/>
+			<target ref="id5"/>
+			<label kind="assignment" x="-510" y="323">initializeGame()</label>
+		</transition>
+	</template>
+	<template>
+		<name>RowRoad</name>
+		<parameter>const int id</parameter>
+		<declaration>// describes roads, logs, turtles in horizontal movement
+
+// Drags Frogger by one cell in this object's direction of travel, using the
+// object's PRE-shift front position (frontX) to decide whether Frogger is
+// currently riding it. Wraps modulo TOTAL_LOOP, identical to the object's own
+// wrap rule, so Frogger can be carried through the two invisible transit cells
+// exactly as the object itself is.
+// Precondition (enforced by the caller, not here): row `y` is a LOG/TURTLE/
+// DIVING_TURTLE row and frog_y == y — this function assumes both already hold.
+void dragFrogIfRiding(int y, int obj)
+{
+    if (!isCellOccupied(y, obj, frog_x))
+        return;
+
+    if (rowInfo[y].moveLeft)
+        frog_x = (frog_x - 1 + TOTAL_LOOP) % TOTAL_LOOP;
+    else
+        frog_x = (frog_x + 1) % TOTAL_LOOP;
+}
+
+// Shifts every object in row `y` by one cell. Before shifting, drags Frogger
+// along if he's riding one of this row's objects — but ONLY for rows that can
+// carry him (LOG/TURTLE/DIVING_TURTLE); road rows (VEHICLE/TRUCK) skip the
+// check entirely; this is why the type test sits at the CALL SITE rather than
+// inside dragFrogIfRiding, avoiding a wasted call/check on the majority of rows.
+void moveRow(int y)
+{
+    int obj;
+
+    // Computed once per row update, not per object: is this row capable of
+    // carrying Frogger, and is he actually standing in it right now?
+    bool canDrag = (rowInfo[y].type == LOG ||
+                     rowInfo[y].type == TURTLE ||
+                     rowInfo[y].type == DIVING_TURTLE) &amp;&amp;
+                    frog_y == y;
+
+    for(obj = 0; obj &lt; rowInfo[y].numObjects; obj++)
+    {
+        if (canDrag)
+            dragFrogIfRiding(y, obj);
+
+        if(rowInfo[y].moveLeft)
+        {
+            rowState[y].x[obj]--;
+            if (rowState[y].x[obj] &lt; 0) {
+                rowState[y].x[obj] = TOTAL_LOOP - 1;
+            }
+        }
+        else
+        {
+            rowState[y].x[obj]++;
+            if (rowState[y].x[obj] &gt;= TOTAL_LOOP) {
+                rowState[y].x[obj] = 0;
+            }
+        }
+    }
+}
+
+//checks if it is the time to move the Objects for the given row
+void updateRow(int y)
+{
+    if(globalTick % rowInfo[y].speed == 0)
+        moveRow(y);
+}</declaration>
+		<location id="id13" x="280" y="0">
+			<name x="255" y="-42">Running</name>
+			<label kind="comments" x="161" y="170">RowRoad — parametrised template, one instance per moving row (vehicles, logs,
+turtles); id selects which row of the const rowInfo[] table this instance drives.
+Role: on every tick?, updateRow(id) checks whether this row's movement period has
+elapsed (globalTick % speed == 0) and, if so, shifts every object in the row by one
+cell via moveRow(id), wrapping around using TOTAL_LOOP (= WIDTH + BORDER_DELAY) to
+reproduce the "reappear after traversing two extra cells" rule.
+Per the assignment's hint, object positions are NEVER reset once the game starts —
+they are relative shifts, so they keep moving continuously even when globalTick
+resets on respawn/level-complete. The single Running location persists for the
+whole game; it is not committed, since real time must elapse here between shifts.</label>
+		</location>
+		<init ref="id13"/>
+		<transition id="id14">
+			<source ref="id13"/>
+			<target ref="id13"/>
+			<label kind="synchronisation" x="594" y="-51">tick?</label>
+			<label kind="assignment" x="594" y="-34">updateRow(id)</label>
+			<nail x="586" y="-127"/>
+			<nail x="586" y="110"/>
+		</transition>
+	</template>
+	<template>
+		<name>DivingTurtle</name>
+		<declaration>int [0, 26]timer = 0;
+</declaration>
+		<location id="id15" x="-289" y="8">
+			<name x="-323" y="-34">AboveWater</name>
+			<label kind="comments" x="-323" y="297">DivingTurtle — single shared process controlling the isSubmerged flag used by
+BOTH diving-turtle groups (row 7 and row 10); modeled once rather than duplicated,
+since no required property depends on the two groups submerging independently.
+Role: abstracts the manual's 4-phase cycle (emerged -&gt; diving -&gt; submerged -&gt;
+emerging, 10/5/10/5 time units) into a 2-location model (AboveWater/Submerged)
+with combined thresholds, since only "can Frogger safely stand here" (AboveWater)
+vs. "does Frogger die" (Submerged) is observable by the rest of the system.
+timer counts ticks within the current phase and is reset on each transition.</label>
+		</location>
+		<location id="id16" x="272" y="25">
+			<name x="262" y="-9">Submerged</name>
+		</location>
+		<init ref="id15"/>
+		<transition id="id17">
+			<source ref="id16"/>
+			<target ref="id16"/>
+			<label kind="guard" x="399" y="-68">timer &lt; DIVE_THRESHOLD_SUBMERGED</label>
+			<label kind="synchronisation" x="399" y="-51">tick?</label>
+			<label kind="assignment" x="399" y="-34">timer++</label>
+			<nail x="391" y="102"/>
+			<nail x="391" y="-51"/>
+		</transition>
+		<transition id="id18">
+			<source ref="id15"/>
+			<target ref="id15"/>
+			<label kind="guard" x="-535" y="-85">timer &lt; DIVE_THRESHOLD_ABOVE</label>
+			<label kind="synchronisation" x="-535" y="-68">tick?</label>
+			<label kind="assignment" x="-535" y="-51">timer++</label>
+			<nail x="-434" y="-63"/>
+			<nail x="-434" y="64"/>
+		</transition>
+		<transition id="id19">
+			<source ref="id16"/>
+			<target ref="id15"/>
+			<label kind="guard" x="-85" y="-221">timer &gt;= DIVE_THRESHOLD_SUBMERGED</label>
+			<label kind="synchronisation" x="-85" y="-204">tick?</label>
+			<label kind="assignment" x="-85" y="-187">timer = 0,
+isSubmerged = false</label>
+			<nail x="-34" y="-119"/>
+		</transition>
+		<transition id="id20">
+			<source ref="id15"/>
+			<target ref="id16"/>
+			<label kind="guard" x="-68" y="161">timer &gt;= DIVE_THRESHOLD_ABOVE</label>
+			<label kind="synchronisation" x="-68" y="178">tick?</label>
+			<label kind="assignment" x="-68" y="195">timer = 0,
+isSubmerged = true</label>
+			<nail x="-17" y="136"/>
+		</transition>
+	</template>
+	<template>
+		<name>Frogger</name>
+		<declaration>
+
+
+
+//-----------------------------------------------MOVE-----------------------
+bool canMoveUp()
+{
+    // Cannot move beyond the top boundary
+    if(frog_y &gt;= HEIGHT - 1)
+        return false;
+
+    // Frog must always stay within the horizontal map limits
+    if(frog_x &lt; 0 || frog_x &gt;= WIDTH)
+        return false;
+
+    // If the destination is the home row,
+    // the target bay must be free.
+    if(map[frog_y + 1] == HOME)
+    {
+        int bay = getHomeBayIndex(frog_x);
+
+        if(bay == -1)    
+            return false;
+
+        if(bayOccupied[bay])
+            return false;
+    }
+
+    return true;
+}
+
+void moveFrog()
+{
+    if(canMoveUp())
+    {
+        frog_y++;
+        
+    }
+}</declaration>
+		<location id="id21" x="-221" y="102">
+			<name x="-272" y="136">Respawning</name>
+			<label kind="comments" x="-459" y="195">Frogger — the player-controlled process; owns frog_x/frog_y and all collision logic.
+Role: on tick?, attempts to move up one cell (moveFrog) if canMoveUp() allows it
+(map boundary and target-home-bay-must-be-free checks), then immediately evaluates
+the outcome in EvaluateSafety: checkCollision() determines death on road/river rows
+via getObjectAtPosition()/isCellOccupied() (which floating-object or vehicle group,
+if any, currently occupies the frog's cell), while reaching a HOME row triggers
+reachBay! and occupyHomeBay().
+EvaluateSafety is committed: the collision/home-bay decision must be resolved
+atomically, before any RowRoad instance advances again or GameManager reacts to a
+stale board state — this is the canonical "compute-then-branch, zero elapsed time"
+case committed locations exist for. Playing and Respawning are plain locations,
+since both persist across many ticks while waiting for the next event.</label>
+		</location>
+		<location id="id22" x="-221" y="-238">
+			<name x="-231" y="-272">Playing</name>
+			<label kind="invariant" x="-246" y="-212">lives &gt; 0</label>
+		</location>
+		<location id="id23" x="374" y="-238">
+			<name x="364" y="-272">EvaluateSafety</name>
+			<committed/>
+		</location>
+		<init ref="id21"/>
+		<transition id="id24">
+			<source ref="id22"/>
+			<target ref="id21"/>
+			<label kind="guard" x="-535" y="-161">globalTick &gt;= currentLevelTimeLimit</label>
+			<label kind="synchronisation" x="-535" y="-135">tick?</label>
+			<nail x="-476" y="-127"/>
+			<nail x="-476" y="51"/>
+		</transition>
+		<transition id="id25">
+			<source ref="id23"/>
+			<target ref="id21"/>
+			<label kind="guard" x="144" y="-68">map[frog_y] == HOME</label>
+			<label kind="synchronisation" x="144" y="-51">reachBay!</label>
+			<label kind="assignment" x="144" y="-34">occupyHomeBay()</label>
+			<nail x="204" y="8"/>
+		</transition>
+		<transition id="id26">
+			<source ref="id23"/>
+			<target ref="id22"/>
+			<label kind="guard" x="-25" y="-229">checkCollision() == false &amp;&amp;
+map[frog_y] != HOME</label>
+			<label kind="assignment" x="-25" y="-187">score+=MOVE_SCORE</label>
+		</transition>
+		<transition id="id27">
+			<source ref="id23"/>
+			<target ref="id21"/>
+			<label kind="guard" x="382" y="0">checkCollision() == true</label>
+			<label kind="synchronisation" x="382" y="17">loseOneLife!</label>
+			<nail x="374" y="102"/>
+		</transition>
+		<transition id="id28">
+			<source ref="id22"/>
+			<target ref="id23"/>
+			<label kind="guard" x="17" y="-450">globalTick &lt; currentLevelTimeLimit 
+&amp;&amp; checkCollision() == false</label>
+			<label kind="assignment" x="17" y="-408">moveFrog()</label>
+			<nail x="76" y="-382"/>
+		</transition>
+		<transition id="id29">
+			<source ref="id22"/>
+			<target ref="id21"/>
+			<label kind="guard" x="-552" y="-314">checkCollision() == true</label>
+			<label kind="synchronisation" x="-552" y="-289">loseOneLife!</label>
+			<nail x="-578" y="-238"/>
+			<nail x="-578" y="102"/>
+		</transition>
+		<transition id="id30">
+			<source ref="id21"/>
+			<target ref="id22"/>
+			<label kind="synchronisation" x="-357" y="-25">frogInitPosition?</label>
+			<label kind="assignment" x="-357" y="9">frogReposition(),
+globalTick = 0</label>
+		</transition>
+	</template>
+	<system>
+Game = GameManager();
+
+Clock = GlobalClock();
+
+Road1 = RowRoad(0);
+Road2 = RowRoad(1);
+Road3 = RowRoad(2);
+Road4 = RowRoad(3);
+Road5 = RowRoad(4);
+
+Turtle7 = RowRoad(5);
+Diving7 = RowRoad(6);
+
+Log8 = RowRoad(7);
+Log9 = RowRoad(8);
+
+Turtle10 = RowRoad(9);
+Diving10 = RowRoad(10);
+
+Log11 = RowRoad(11);
+
+DiveState = DivingTurtle();
+
+Frog = Frogger();
+system
+    Frog,            //has to be commented out for query 1 and 2
+
+    Clock, 
+    Game, 
+
+    Road1,
+    Road2,
+    Road3,
+    Road4,
+    Road5,
+
+    Turtle7,
+    Diving7,
+
+    Log8,
+    Log9,
+
+    Turtle10,
+    Diving10,
+
+    Log11, 
+    
+    DiveState; </system>
+	<queries>
+		<query>
+			<formula>A[] not deadlock</formula>
+			<comment>I) Without considering Frogger: the game never reaches a deadlock state.
+
+verified in 125 sec.
+
+REMOVE FROGGER FROM THE SYSTEM DECLARATIONS BEFORE RUNNING THIS QUERY.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:12:06 +0200">
+			</result>
+		</query>
+		<query>
+			<formula>A[]
+forall(y:int[0,NUM_MOVING_ROWS-1])
+forall(obj:int[0,MAX_PER_ROW-1])
+    rowState[y].x[obj] &gt;= 0 &amp;&amp;
+    rowState[y].x[obj] &lt; TOTAL_LOOP</formula>
+			<comment>II) Without considering Frogger: all vehicles and floating objects can only move inside their predefined row.
+
+BY DESIGN no mutable rowInfo[y] exists. an Object cannot move from one line to another by design ().
+
+Query every object always remains inside the cyclic lane assigned to it.
+
+REMOVE FROGGER FROM THE SYSTEM DECLARATIONS BEFORE RUNNING THIS QUERY.
+
+verified in 66 sec.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:13:22 +0200">
+			</result>
+		</query>
+		<query>
+			<formula>E&lt;&gt; bayOccupied[0]</formula>
+			<comment> III) Frogger can eventually reach the first home bay  in position (0,12)–(1,12)
+
+verified in 35 sec.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:27:40 +0200">
+			</result>
+		</query>
+		<query>
+			<formula>E&lt;&gt; ((frog_y == 12 &amp;&amp; (frog_x == 8 || frog_x == 9)) &amp;&amp; score == 17)</formula>
+			<comment>IV) Frogger can score 17 points reaching the home bay in position (8,12)–(9,12).
+
+Bring back the Frog. 
+verified in 115 sec.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:16:51 +0200">
+			</result>
+		</query>
+		<query>
+			<formula>E&lt;&gt; (lives &lt;= 3 &amp;&amp; frog_y == 6)</formula>
+			<comment>V) Frogger can reach a yellow cell in row 6 after the player has lost two lives.
+
+For this query we dont need to initiialize all the rows. The next ones are enough to include the needed state and do not explode the state space. 
+Bring back the Frog. 
+
+verified in 60 sec.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:22:27 +0200">
+			</result>
+		</query>
+		<query>
+			<formula>E&lt;&gt; (globalTick &gt;= 10 &amp;&amp; lives == 5 &amp;&amp;
+     getObjectAtPosition(frog_y, frog_x) != -1 &amp;&amp;
+     rowInfo[getObjectAtPosition(frog_y, frog_x)].type == LOG)</formula>
+			<comment>VI) Frogger may stand on a log (with five lives) 10 seconds after the game starts.
+
+verified in 1 sec.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:26:17 +0200">
+			</result>
+		</query>
+		<query>
+			<formula>E&lt;&gt; (Frog.EvaluateSafety &amp;&amp; checkCollision() &amp;&amp; isSubmerged)</formula>
+			<comment>VII) Frogger can die riding a diving turtle that transitions to the submerged state.
+
+Frogger is about to die, and it's because a diving turtle is currently submerged. 
+At the one instant that state is observable before EvaluateSafety transitions him back to Respawning.
+
+verified in 1 sec.</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-21 23:25:31 +0200">
+			</result>
+		</query>
+	</queries>
+</nta>
