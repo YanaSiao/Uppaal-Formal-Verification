@@ -27,6 +27,9 @@ const int BAY_SCORE = 5;
 const int LEVEL_SCORE = 100; 
 const int MOVE_SCORE = 1;
 
+const int BAY_BLOCK_SIZE = 4;
+const int BAY_WIDTH = 2;
+
 //--- TIME
 
 const int TICK_PERIOD = 1;
@@ -60,7 +63,13 @@ const ObjectType DIVING_TURTLE  = 4;
 /************************************************************
  *              IMMUTABLE OBJECT DESCRIPTION
  ************************************************************/
-
+/**
+ * Immutable description of a moving object group.
+ *
+ * Stores the properties shared by all objects in a row, including movement
+ * direction, object type, object size, initial positions, and special states
+ * such as diving turtles.
+ */
 typedef struct
 {
     int row;                    // y coordinate
@@ -78,7 +87,12 @@ typedef struct
 /************************************************************
  *              MUTABLE OBJECT STATE
  ************************************************************/
-
+/**
+ * Mutable runtime state of a moving object group.
+ *
+ * Stores the current horizontal position of each object. Values are updated
+ * during gameplay while the corresponding RowInfo data remains unchanged.
+ */
 typedef struct
 {
     int x[MAX_PER_ROW];
@@ -103,7 +117,12 @@ int[0, INITIAL_TIME_LIMIT] currentLevelTimeLimit = INITIAL_TIME_LIMIT;
 /************************************************************
  *                 STATIC MAP
  ************************************************************/
-
+/**
+ * Static terrain layout of the game board.
+ *
+ * Each row defines the terrain type used for collision detection and movement
+ * rules. The map separates safe areas, roads, rivers, and home locations.
+ */
 const TileType map[HEIGHT] =
 {
     SAFE,   // 0
@@ -152,6 +171,13 @@ broadcast chan loseOneLife;
 /************************************************************
  *            OBJECT DECLARATIONS
  ************************************************************/
+/**
+ * Immutable configuration table for all moving object groups.
+ *
+ * Each entry defines one group of moving entities, including position,
+ * movement speed, direction, object type, and initial placement. Runtime
+ * positions are stored separately in rowState.
+ */
 const RowInfo rowInfo[NUM_MOVING_ROWS] =
 {
     // row,size,speed,left,type,diving,numObj,{positions}
@@ -180,12 +206,28 @@ const RowInfo rowInfo[NUM_MOVING_ROWS] =
     {11,5,2,false,LOG,false,2,{1,11,0,0}}
 };
 
+/**
+ * Runtime positions of all moving object groups.
+ *
+ * This array changes during gameplay as objects move, while rowInfo remains constant.
+ */
 RowState rowState[NUM_MOVING_ROWS];
 
-
-bool isSubmerged;
+// Only meaningful for diving turtle rows.Other rows ignore this value.
+bool isSubmerged = false;
 
 //------------------------------------------------------INIT---------------------------
+
+/**
+ * Initializes the runtime positions of all moving objects.
+ *
+ * @param none
+ * @return void
+ *
+ * Overview:
+ * Copies the initial positions stored in the immutable row descriptions into
+ * the mutable row state array. Also resets the diving state used by turtle rows.
+ */
 void initializeRows()
 {
     int y, obj;
@@ -198,11 +240,18 @@ void initializeRows()
         }
     }
 
-    // Only meaningful for diving turtle rows.
-    // Other rows ignore this value.
-    isSubmerged = false;
 }
 
+/**
+ * Resets the occupancy state of all home bays.
+ *
+ * @param none
+ * @return void
+ *
+ * Overview:
+ * Iterates through every home bay and marks it as empty. This function is
+ * called when starting a new level to restore the initial game state.
+ */
 void clearHomeBays()
 {
     int i;
@@ -211,14 +260,32 @@ void clearHomeBays()
         bayOccupied[i] = false;
 }
 
-
+/**
+ * Moves the frog back to its initial starting position.
+ *
+ * @param none
+ * @return void
+ *
+ * Overview:
+ * Updates the frog coordinates using the predefined starting position constants. 
+ * This function is used after losing a life and after completing a level.
+ */
 void frogReposition()
 {
     frog_x = START_X;
     frog_y = START_Y;
 }
 
-
+/**
+ * Resets all level-specific variables and prepares a new level.
+ *
+ * @param none
+ * @return void
+ *
+ * Overview:
+ * Clears occupied home bays, places the frog at its initial position, 
+ * and resets the level timer counter while keeping global game progress values.
+ */
 void startNewLevel()
 {
     clearHomeBays();
@@ -228,13 +295,30 @@ void startNewLevel()
     globalTick = 0;
 }
 
+/**
+ * Completes the current level and prepares the next one.
+ *
+ * @param none
+ * @return void
+ *
+ * Overview:
+ * Adds the level completion reward to the score and restores all level dependent variables by starting a new level.
+ */
 void finishCurrentLevel()
 {
-    score += 100;
 
     startNewLevel();
 }
 
+/**
+ * Initializes the complete game state before gameplay begins.
+ *
+ * @param none
+ * @return void
+ *
+ * Overview:
+ * Initializes moving objects, resets lives and score, and starts the first level with all default values.
+ */
 void initializeGame()
 {
     initializeRows();
@@ -249,7 +333,15 @@ void initializeGame()
 
 
 
-//--------------------
+/**
+ * Removes one player life and resets the frog position after failure.
+ *
+ * @param none
+ * @return void
+ *
+ * Overview:
+ * Decreases the remaining life counter and places the frog back at the starting location so gameplay can continue.
+ */
 void loseLife()
 {
     lives--;
@@ -259,25 +351,39 @@ void loseLife()
 
 //---------------------------------------------BAYS---------------------
 /**
- * Determines which home bay index corresponds to a given horizontal coordinate.
- * * @param x The column coordinate (x-axis index) on the home row.
- * @return The bay index (0 to 4), or -1 if outside valid bay locations.
+ * Calculates the home bay index associated with a horizontal coordinate.
+ *
+ * @param x The horizontal coordinate to evaluate on the home row.
+ * @return The corresponding home bay index, or -1 if the coordinate does not belong to a valid home bay.
+ *
+ * Overview:
+ * Divides the map into home bay blocks and checks whether the given position
+ * belongs to the usable cells inside one of those blocks.
  */
 int getHomeBayIndex(int x)
 {
-    int block = x / 4;
+    int block = x / BAY_BLOCK_SIZE;
 
     // Outside the five home blocks
     if(block &gt;= NUM_HOME_BAYS)
         return -1;
 
     // Only the first two cells of each block are a bay
-    if(x % 4 &gt;= 2)
+    if(x % BAY_BLOCK_SIZE &gt;= BAY_WIDTH )
         return -1;
 
     return block;
 }
 
+/**
+ * Checks whether every available home bay has been occupied.
+ *
+ * @param none
+ * @return true if all home bays contain a frog, otherwise false.
+ *
+ * Overview:
+ * Iterates over the home bay occupancy array and verifies that no empty bay remains.
+ */
 bool allBaysOccupied()
 {
     int i;
@@ -291,18 +397,40 @@ bool allBaysOccupied()
     return true;
 }
 
-
+/**
+ * Marks the current frog position as occupying a home bay.
+ *
+ * @param none
+ * @return void
+ *
+ * Overview:
+ * Determines the home bay corresponding to the frog position and updates the occupancy state to indicate that the bay has been successfully filled.
+ */
 void occupyHomeBay()
 {
     int bay = getHomeBayIndex(frog_x);
 
-    bayOccupied[bay] = true;
+    if(bay != -1)
+    {
+        bayOccupied[bay] = true;
+    }
 
 }
 
 //------------------------------------------------------FROGGER---------------------------
 
-// inside rowInfo entry 'rowIndex'
+/**
+ * Determines whether a moving object occupies a specific horizontal cell.
+ *
+ * @param rowIndex The index of the moving row containing the object.
+ * @param obj The object index within the selected row.
+ * @param target_x The horizontal coordinate to test.
+ *
+ * @return true if the object covers the specified coordinate, otherwise false.
+ *
+ * Overview:
+ * Calculates every cell occupied by the moving object according to its size and movement direction, including wrap-around movement at map boundaries.
+ */
 bool isCellOccupied(int rowIndex, int obj, int target_x)
 {
     int size = rowInfo[rowIndex].size;
@@ -334,10 +462,12 @@ bool isCellOccupied(int rowIndex, int obj, int target_x)
 
 /**
  * Finds the index of the moving row object located at the specified grid coordinates.
- * * @param y The row coordinate (y-axis index).
+ * 
+ * @param y The row coordinate (y-axis index).
  * @param target_x The column coordinate (x-axis index).
  * @return The index of the row object if found, or -1 if the cell is empty.
- * * Overview: Iterates through the tracking slots of the given row index, 
+ * 
+ * Overview: Iterates through the tracking slots of the given row index, 
  * calculating actual positions based on horizontal movement offsets.
  */
 int getObjectAtPosition(int y, int target_x)
@@ -368,22 +498,26 @@ int getObjectAtPosition(int y, int target_x)
 /**
  * Checks whether Frogger is currently colliding with a hazard, 
  * falling into water without a platform, or hitting a wall/occupied bay.
- * * @return true if a collision/death condition is met, false otherwise.
- * * Overview: Evaluates the map type of Frogger's current row (SAFE, ROAD, 
+ *
+ * @return true if a collision/death condition is met, false otherwise.
+ *
+ * Overview: Evaluates the map type of Frogger's current row (SAFE, ROAD, 
  * RIVER, or HOME). For roads, it checks vehicle overlap. For rivers, it 
  * checks platform presence and diving turtle submersions. For home bays, 
  * it checks bounds and bay occupation.
  */
 bool checkCollision()
 {
+    TileType currentTile = map[frog_y];
+
     // Safe rows -&gt; No collision danger
-    if (map[frog_y] == SAFE)
+    if (currentTile == SAFE)
     {
         return false;
     }
 
     // Win row / Home Bays: Collision is true if the target bay is already occupied
-    if (map[frog_y] == HOME)
+    if (currentTile == HOME)
     {
         int bay = getHomeBayIndex(frog_x);
 
@@ -399,7 +533,7 @@ bool checkCollision()
 
 
     // Road Rows: Cars kill frog
-    if (map[frog_y] == ROAD)
+    if (currentTile == ROAD)
     {
         if(getObjectAtPosition(frog_y, frog_x) != -1)
         {
@@ -409,7 +543,7 @@ bool checkCollision()
 
 
     // River Rows: Frog must stand on something safe
-    if (map[frog_y] == RIVER)
+    if (currentTile == RIVER)
     {
         int rowIndex  = getObjectAtPosition(frog_y, frog_x);
 
@@ -990,8 +1124,8 @@ verified in 10 sec.(40 sec on less powerful PC)</comment>
 			<formula>E&lt;&gt; bayOccupied[0]</formula>
 			<comment> III) Frogger can eventually reach the first home bay  in position (0,12)–(1,12)
 
-verified in 8 sec. (19 sec on less powerful PC)</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-22 12:41:40 +0200">
+verified in 8 sec. (37 sec on less powerful PC)</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-22 18:14:28 +0200">
 			</result>
 		</query>
 		<query>
@@ -999,8 +1133,8 @@ verified in 8 sec. (19 sec on less powerful PC)</comment>
 			<comment>IV) Frogger can score 17 points reaching the home bay in position (8,12)–(9,12).
 
 Bring back the Frog. 
-verified in 50 sec. (360 sec on less powerful PC)</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-22 12:51:44 +0200">
+verified in 50 sec. (310 sec on less powerful PC)</comment>
+			<result outcome="success" type="quality" timestamp="2026-07-22 18:20:19 +0200">
 			</result>
 		</query>
 		<query>
@@ -1011,7 +1145,7 @@ For this query we dont need to initiialize all the rows. The next ones are enoug
 Bring back the Frog. 
 
 verified in 10 sec. (90 sec on less powerful PC)</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-22 13:01:24 +0200">
+			<result outcome="success" type="quality" timestamp="2026-07-22 18:23:44 +0200">
 			</result>
 		</query>
 		<query>
@@ -1021,7 +1155,7 @@ verified in 10 sec. (90 sec on less powerful PC)</comment>
 			<comment>VI) Frogger may stand on a log (with five lives) 10 seconds after the game starts.
 
 verified in 1 sec. (10 sec on less powerful PC)</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-22 13:02:18 +0200">
+			<result outcome="success" type="quality" timestamp="2026-07-22 18:24:03 +0200">
 			</result>
 		</query>
 		<query>
@@ -1032,7 +1166,7 @@ Frogger is about to die, and it's because a diving turtle is currently submerged
 At the one instant that state is observable before EvaluateSafety transitions him back to Respawning.
 
 verified in 1 sec. (1 sec on less powerful PC)</comment>
-			<result outcome="success" type="quality" timestamp="2026-07-22 13:08:53 +0200">
+			<result outcome="success" type="quality" timestamp="2026-07-22 18:24:10 +0200">
 			</result>
 		</query>
 	</queries>
