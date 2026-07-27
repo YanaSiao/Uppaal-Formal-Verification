@@ -122,6 +122,6 @@ Detailed results and analysis are available in the report:
 
 This project focuses on **formal correctness and verification**, not gameplay implementation.
 
-This repository is licensed under the MIT License.
+This repository is licensed under a Custom Educational License.
 
 The author does **not** grant permission for this repository or its contents to be used for training, fine-tuning, or evaluation of machine learning or generative AI models.
