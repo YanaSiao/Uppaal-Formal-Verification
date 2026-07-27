@@ -1,6 +1,6 @@
 # Hop-paal Verification
 
-Formal modeling and verification of a Frogger-inspired game using Uppaal, including symbolic and stochastic analysis.
+A reusable UPPAAL case study demonstrating formal modeling, timed automata design, symbolic verification, and statistical model checking through a Frogger-inspired game.
 
 ## Overview
 
@@ -14,7 +14,7 @@ The goal is to model a simplified version of the classic Frogger game and formal
 
 The system is implemented and analyzed using **Uppaal**.
 
-## Objectives
+## Highlights
 
 - Model the game dynamics as a system of interacting timed automata
 - Verify safety and reachability properties
@@ -23,12 +23,21 @@ The system is implemented and analyzed using **Uppaal**.
 
 
 ## Project Structure
-├── symbolic/ # Uppaal model (deterministic version)
-├── stochastic/ # Uppaal model (probabilistic version)
-├── report/ # Final report (PDF)
+```text
+├── symbolic/      # UPPAAL model (deterministic version)
+├── stochastic/    # UPPAAL model (probabilistic version)
+├── report/        # Final report (PDF)
 └── README.md
+```
 
+This repository also contains notes describing:
 
+- how to structure a UPPAAL project
+- how to avoid state-space explosion
+- when to use templates versus global functions
+- symbolic vs stochastic verification
+- common modeling pitfalls
+  
 ##  Model Description
 
 The game is modeled as a grid-based environment including:
@@ -40,36 +49,39 @@ The game is modeled as a grid-based environment including:
 
 Key modeling aspects:
 
-- Time constraints encoded via clocks
+- Time constraints encoded via global clock synchronization
 - Movement rules enforced through transitions
 - Safety conditions (e.g., collisions, drowning)
 - Synchronization between entities
 
+## Model Architecture
+
+The game is modeled as a Network of Timed Automata consisting of:
+
+- GlobalClock
+- GameManager
+- RowRoad
+- TruckRow
+- DivingTurtle
+- Frogger
+
+The model follows a synchronized single-clock architecture in which all automata advance through a broadcast tick event. This minimizes clock dimensions while ensuring deterministic collision evaluation.
 
 ##  Verification
 
-### Symbolic Verification
+| Property              | Status |
+| --------------------- | ------ |
+| Deadlock free         | ✅      |
+| Reachability          | ✅      |
+| Safety                | ✅      |
+| Collision correctness | ✅      |
+| SMC experiments       | ✅      |
 
-The symbolic model verifies properties such as:
+The stochastic model analysis includes:
 
-- Absence of deadlocks
-- Correct movement constraints of entities
-- Reachability of specific game states
-- Safety conditions (e.g., Frogger survival)
-
-
-### Stochastic Verification
-
-The stochastic model extends the system with:
-
-- Probabilistic Frogger movement
-- Exponential timing for selected entities
-
-Analysis includes:
-
-- Probability of completing a level
+- Probability of completing a level and game progression
 - Score-based performance evaluation
-- Behavioral comparison under different strategies
+- Behavioral comparison under two different strategies
 
 
 ##  Tools
