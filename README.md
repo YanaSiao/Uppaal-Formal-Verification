@@ -100,24 +100,6 @@ The stochastic model analysis includes:
 4. Run the predefined queries
 
 
-## Results
-
-Detailed results and analysis are available in the report:
-(add link)
-
----
-
-## References
-
-- Uppaal Documentation: https://uppaal.org/
-- Course material (Formal Methods for Software Engineering)
-
-
-## Author
-
-- Yana Siao
-
-
 ## Notes
 
 This project focuses on **formal correctness and verification**, not gameplay implementation.
